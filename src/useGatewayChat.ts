@@ -9,6 +9,8 @@ import {
 export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
+  /** If true, this message represents a send/network/scope error and should be shown with error styling */
+  isError?: boolean
 }
 
 interface GatewayConfig {
@@ -49,7 +51,7 @@ export function useGatewayChat() {
   const [isLoading, setIsLoading] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const sessionKeyRef = useRef<string>('agent:main:main')
-  const pendingRef = useRef<Map<string, (payload: any) => void>>(new Map())
+  const pendingRef = useRef<Map<string, { resolve: (payload: any) => void; reject: (err: any) => void }>>(new Map())
   const streamingRef = useRef<Map<string, string>>(new Map())
   const finalizedRef = useRef<Set<string>>(new Set())
   const spokenRef = useRef<Set<string>>(new Set())
@@ -61,7 +63,7 @@ export function useGatewayChat() {
       const ws = wsRef.current
       if (!ws || ws.readyState !== WebSocket.OPEN) return reject('not connected')
       const id = nextId()
-      pendingRef.current.set(id, resolve)
+      pendingRef.current.set(id, { resolve, reject })
       ws.send(JSON.stringify({ type: 'req', id, method, params }))
       setTimeout(() => {
         if (pendingRef.current.has(id)) {
@@ -173,7 +175,12 @@ export function useGatewayChat() {
           const cb = pendingRef.current.get(frame.id)
           if (cb) {
             pendingRef.current.delete(frame.id)
-            cb(frame.payload)
+            // Reject on ok:false so callers (e.g. sendMessage) surface gateway errors as visible UI errors
+            if (frame.ok === false) {
+              cb.reject(frame.error?.message ?? JSON.stringify(frame.error) ?? 'Gateway rejected request')
+            } else {
+              cb.resolve(frame.payload)
+            }
           }
         }
       }
@@ -237,7 +244,7 @@ export function useGatewayChat() {
       if (runId) finalizedRef.current.add(runId)
       setMessages(prev => [
         ...prev,
-        { role: 'assistant', text: `Error: ${extractText(message) || 'Unknown error'}` },
+        { role: 'assistant', text: `Failed to send — ${extractText(message) || 'Unknown error'}`, isError: true },
       ])
       if (runId) streamingRef.current.delete(runId)
     } else if (state === 'user' || role === 'user') {
@@ -255,17 +262,23 @@ export function useGatewayChat() {
       setMessages(prev => [...prev, { role: 'user', text }])
       setIsLoading(true)
       try {
-        await sendReq('chat.send', {
+        const result = await sendReq('chat.send', {
           sessionKey: sessionKeyRef.current,
           message: text,
           deliver: false,      // Suppress delivery to external channels; response comes via chat events
           idempotencyKey: crypto.randomUUID(),
         })
+        // If gateway returned ok:false without throwing (shouldn't happen with new sendReq, defensive check)
+        if (result && result.ok === false) {
+          throw new Error(result.error?.message ?? 'Gateway returned not-ok')
+        }
       } catch (e) {
+        // Surface the error visibly — clear the spinner and show an inline error message
         setIsLoading(false)
+        const errText = typeof e === 'string' ? e : (e instanceof Error ? e.message : String(e))
         setMessages(prev => [
           ...prev,
-          { role: 'assistant', text: `Failed to send: ${e}` },
+          { role: 'assistant', text: `Failed to send — ${errText}`, isError: true },
         ])
       }
     },

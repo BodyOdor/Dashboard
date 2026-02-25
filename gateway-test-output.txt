@@ -1,0 +1,41 @@
+# Gateway Test Output
+# Generated: 2026-02-25T21:58:19.629Z
+# Script:    gateway-test.mjs
+
+============================================================
+GATEWAY TEST — 2026-02-25T21:58:16.680Z
+============================================================
+Target: ws://127.0.0.1:18789
+Token:  789758ef...
+Scopes: operator.admin, operator.approvals, operator.pairing
+
+Device ID:  f386452f88eb47bf52388f1b8062a210a79a9505f5d696ac74411a602ec001be
+Public key: 2Gn6q5BvBU6_a7WBNaw5...
+
+[2026-02-25T21:58:16.703Z] WebSocket OPEN
+[RECV] {"type":"event","event":"connect.challenge","payload":{"nonce":"ddf0d2f4-8f41-43e3-8c94-399d6a572a39","ts":1772056696702}}
+[2026-02-25T21:58:16.703Z] Got connect.challenge (nonce=ddf0d2f4...)
+[SEND] {"type":"req","id":"connect-1","method":"connect","params":{"minProtocol":3,"maxProtocol":3,"client":{"id":"openclaw-control-ui","version":"0.1.0","platform":"macos","mode":"webchat"},"role":"operator
+[RECV] {"type":"res","id":"connect-1","ok":true,"payload":{"type":"hello-ok","protocol":3,"server":{"version":"2026.2.24","connId":"bdd0a6dc-abfe-405a-99f4-2786793b0c23"},"features":{"methods":["health","doctor.memory.status","logs.tail","channels.status","channels.logout","status","usage.status","usage.cost","tts.status","tts.providers","tts.enable","tts.disable","tts.convert","tts.setProvider","config.
+[2026-02-25T21:58:16.707Z] connect OK — sessionKey=agent:main:main
+
+[2026-02-25T21:58:16.707Z] Sending chat.send test message...
+[SEND] {"type":"req","id":"r-1","method":"chat.send","params":{"sessionKey":"agent:main:main","message":"Gateway test (automated): reply with one short sentence confirming you received this. Do not engage fu
+[RECV] {"type":"res","id":"r-1","ok":true,"payload":{"runId":"gateway-test-1772056696707","status":"started"}}
+[2026-02-25T21:58:16.708Z] chat.send response: ok=n/a {"runId":"gateway-test-1772056696707","status":"started"}
+[RECV] {"type":"event","event":"agent","payload":{"runId":"gateway-test-1772056696707","stream":"lifecycle","data":{"phase":"start","startedAt":1772056696738},"sessionKey":"agent:main:main","seq":1,"ts":1772056696738},"seq":9004}
+[RECV] {"type":"event","event":"health","payload":{"ok":true,"ts":1772056697455,"durationMs":748,"channels":{"telegram":{"configured":true,"running":false,"lastStartAt":null,"lastStopAt":null,"lastError":null,"tokenSource":"none","probe":{"ok":true,"status":null,"error":null,"elapsedMs":717,"bot":{"id":8408968269,"username":"JsLarryBot","canJoinGroups":true,"canReadAllGroupMessages":false,"supportsInline
+[RECV] {"type":"event","event":"agent","payload":{"runId":"gateway-test-1772056696707","stream":"assistant","data":{"text":"Message","delta":"Message"},"sessionKey":"agent:main:main","seq":2,"ts":1772056699547},"seq":9006}
+[RECV] {"type":"event","event":"chat","payload":{"runId":"gateway-test-1772056696707","sessionKey":"agent:main:main","seq":2,"state":"delta","message":{"role":"assistant","content":[{"type":"text","text":"Message"}],"timestamp":1772056699547}},"seq":9007}
+[2026-02-25T21:58:19.549Z] chat event state=delta runId=gateway-test-1772056696707
+  delta #1: "{"role":"assistant","content":[{"type":"text","text":"Message"}],"timestamp":177..."
+[RECV] {"type":"event","event":"agent","payload":{"runId":"gateway-test-1772056696707","stream":"assistant","data":{"text":"Message received.","delta":" received."},"sessionKey":"agent:main:main","seq":3,"ts":1772056699594},"seq":9008}
+[RECV] {"type":"event","event":"agent","payload":{"runId":"gateway-test-1772056696707","stream":"lifecycle","data":{"phase":"end","endedAt":1772056699627},"sessionKey":"agent:main:main","seq":4,"ts":1772056699627},"seq":9009}
+[RECV] {"type":"event","event":"chat","payload":{"runId":"gateway-test-1772056696707","sessionKey":"agent:main:main","seq":4,"state":"final","message":{"role":"assistant","content":[{"type":"text","text":"Message received."}],"timestamp":1772056699628}},"seq":9010}
+[2026-02-25T21:58:19.628Z] chat event state=final runId=gateway-test-1772056696707
+  final text: "{"role":"assistant","content":[{"type":"text","text":"Message received."}],"timestamp":1772056699628}"
+  delta count seen: 1
+
+============================================================
+TEST PASSED — 2026-02-25T21:58:19.629Z
+============================================================

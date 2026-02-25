@@ -355,18 +355,28 @@ function App() {
             <span className={`inline-block w-2.5 h-2.5 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`} title={isConnected ? 'Connected' : 'Disconnected'} />
           </h2>
           <div ref={chatContainerRef} className="bg-white/10 rounded-lg p-4 h-48 mb-3 overflow-y-auto text-lg text-white/90 flex flex-col gap-3 backdrop-blur-sm border border-white/10">
-            {chatMessages.slice(-50).map((msg, i) => (
-              <div key={i + (chatMessages.length - 50)} className={`max-w-[80%] p-2 rounded-lg ${msg.role === 'user' ? 'self-end bg-blue-500/20 text-white/90' : 'self-start bg-gray-800/30 text-white/90'}`}>
-                <span className={`text-sm font-medium ${msg.role === 'assistant' ? 'text-blue-400' : 'text-green-400'}`}>
-                  {msg.role === 'assistant' ? 'Larry' : 'You'}
-                </span>
-                <div className="mt-1 text-base leading-relaxed">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-300 underline hover:text-blue-400">{children}</a> }}>
-                    {msg.text}
-                  </ReactMarkdown>
+            {chatMessages.slice(-50).map((msg, i) => {
+              // Error messages: red/muted inline indicator instead of normal assistant bubble
+              if (msg.isError) {
+                return (
+                  <div key={i + (chatMessages.length - 50)} className="self-start max-w-[80%] px-3 py-2 rounded-lg bg-red-900/30 border border-red-500/30 text-red-300/80 text-sm italic">
+                    ⚠ {msg.text}
+                  </div>
+                )
+              }
+              return (
+                <div key={i + (chatMessages.length - 50)} className={`max-w-[80%] p-2 rounded-lg ${msg.role === 'user' ? 'self-end bg-blue-500/20 text-white/90' : 'self-start bg-gray-800/30 text-white/90'}`}>
+                  <span className={`text-sm font-medium ${msg.role === 'assistant' ? 'text-blue-400' : 'text-green-400'}`}>
+                    {msg.role === 'assistant' ? 'Larry' : 'You'}
+                  </span>
+                  <div className="mt-1 text-base leading-relaxed">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-300 underline hover:text-blue-400">{children}</a> }}>
+                      {msg.text}
+                    </ReactMarkdown>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
             {chatLoading && (
               <div className="self-start p-2 rounded-lg bg-gray-800/30 text-white/40 italic text-sm">Larry is thinking...</div>
             )}
@@ -437,8 +447,24 @@ function getWeatherIcon(code: number): string {
 }
 
 /**
- * Agent-to-project mapping — keyed by project file ID (markdown filename without .md)
- * Multiple agents can be assigned to a project (e.g. BrightWaveFX has dev + sales + social agents)
+ * PROJECT_AGENTS — Agent-to-project mapping
+ *
+ * OWNER: Dash 🖥️ (dashboard dev agent) is responsible for maintaining this map.
+ *
+ * WHAT IT IS:
+ *   Maps a project file ID (markdown filename without .md extension, e.g. "brightwavefx")
+ *   to one or more agent display strings (e.g. ["Wave 🌊"]). Multiple agents are supported
+ *   for projects with more than one assigned specialist.
+ *
+ * HOW TO UPDATE:
+ *   - When a new project or agent is added to the workspace, add a corresponding entry here.
+ *   - Key = the .md filename (without extension) found in ~/.openclaw/workspace/projects/
+ *   - Value = array of agent label strings, e.g. ['Bolt ⚡'] or ['Wave 🌊', 'Flare 🔥']
+ *   - Entries with no matching project file are safely ignored at runtime.
+ *
+ * WHY HERE:
+ *   Frontend-only mapping avoids coupling the Rust parser or project markdown files to agent
+ *   metadata. Project IDs are stable identifiers; agent assignment is a dashboard concern.
  */
 const PROJECT_AGENTS: Record<string, string[]> = {
   'brightwavefx':             ['Wave 🌊'],
