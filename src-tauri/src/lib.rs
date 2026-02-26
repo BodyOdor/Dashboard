@@ -579,6 +579,129 @@ async fn read_strike_data() -> Result<String, String> {
         .map_err(|e| format!("Failed to read: {}", e))
 }
 
+// ─── SnapTrade: signed requests from Rust to avoid CORS ──────────────────────
+
+#[tauri::command]
+async fn fetch_snaptrade_accounts(
+    client_id: String,
+    consumer_key: String,
+    user_id: String,
+    user_secret: String,
+) -> Result<String, String> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    use base64::{Engine as _, engine::general_purpose};
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .to_string();
+
+    // Sign: HMAC-SHA256(key=consumerKey, data=clientId+timestamp) → base64
+    let message = format!("{}{}", client_id, timestamp);
+    let mut mac = Hmac::<Sha256>::new_from_slice(consumer_key.as_bytes())
+        .map_err(|e| format!("HMAC init error: {}", e))?;
+    mac.update(message.as_bytes());
+    let signature = general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+
+    let client = reqwest::Client::new();
+
+    // Build a signed URL for a given path
+    let build_url = |path: &str| -> String {
+        format!(
+            "https://api.snaptrade.com{}?userId={}&userSecret={}&clientId={}&timestamp={}",
+            path, user_id, user_secret, client_id, timestamp
+        )
+    };
+
+    // Fetch accounts list
+    let accounts_url = build_url("/api/v1/accounts");
+    let accounts_resp = client
+        .get(&accounts_url)
+        .header("Signature", &signature)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("accounts fetch error: {}", e))?;
+
+    if !accounts_resp.status().is_success() {
+        let status = accounts_resp.status().as_u16();
+        let body = accounts_resp.text().await.unwrap_or_default();
+        return Err(format!("accounts HTTP {}: {}", status, body));
+    }
+
+    let accounts: serde_json::Value = accounts_resp
+        .json()
+        .await
+        .map_err(|e| format!("accounts parse error: {}", e))?;
+
+    let account_list = accounts.as_array().cloned().unwrap_or_default();
+
+    // For each account, fetch balances + positions in parallel
+    let mut enriched: Vec<serde_json::Value> = Vec::new();
+    for acct in account_list {
+        let acct_id = acct["id"].as_str().unwrap_or("").to_string();
+        if acct_id.is_empty() {
+            enriched.push(serde_json::json!({
+                "account": acct,
+                "balances": [],
+                "positions": [],
+            }));
+            continue;
+        }
+
+        let balances_url = build_url(&format!("/api/v1/accounts/{}/balances", acct_id));
+        let positions_url = build_url(&format!("/api/v1/accounts/{}/positions", acct_id));
+
+        let (bal_res, pos_res) = tokio::join!(
+            client
+                .get(&balances_url)
+                .header("Signature", &signature)
+                .header("Accept", "application/json")
+                .send(),
+            client
+                .get(&positions_url)
+                .header("Signature", &signature)
+                .header("Accept", "application/json")
+                .send()
+        );
+
+        let balances: serde_json::Value = match bal_res {
+            Ok(r) if r.status().is_success() => r.json().await.unwrap_or(serde_json::json!([])),
+            Ok(r) => {
+                eprintln!("balances HTTP {}", r.status());
+                serde_json::json!([])
+            }
+            Err(e) => {
+                eprintln!("balances fetch error: {}", e);
+                serde_json::json!([])
+            }
+        };
+
+        let positions: serde_json::Value = match pos_res {
+            Ok(r) if r.status().is_success() => r.json().await.unwrap_or(serde_json::json!([])),
+            Ok(r) => {
+                eprintln!("positions HTTP {}", r.status());
+                serde_json::json!([])
+            }
+            Err(e) => {
+                eprintln!("positions fetch error: {}", e);
+                serde_json::json!([])
+            }
+        };
+
+        enriched.push(serde_json::json!({
+            "account": acct,
+            "balances": balances,
+            "positions": positions,
+        }));
+    }
+
+    serde_json::to_string(&enriched)
+        .map_err(|e| format!("JSON serialization error: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -592,7 +715,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_system_stats, get_projects, toggle_task, get_gateway_config, toggle_input_mute, start_voice_input, stop_voice_input, speak_text, fetch_tickers, fetch_coinbase, read_coinbase_data, fetch_strike, read_strike_data])
+        .invoke_handler(tauri::generate_handler![get_system_stats, get_projects, toggle_task, get_gateway_config, toggle_input_mute, start_voice_input, stop_voice_input, speak_text, fetch_tickers, fetch_coinbase, read_coinbase_data, fetch_strike, read_strike_data, fetch_snaptrade_accounts])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

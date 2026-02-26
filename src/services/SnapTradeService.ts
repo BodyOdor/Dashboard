@@ -1,12 +1,11 @@
 /**
- * SnapTrade REST API client with HMAC-SHA256 request signing.
+ * SnapTrade API client — routes calls through Tauri Rust backend to avoid CORS.
+ * The browser cannot send a custom `Signature` header cross-origin; Rust can.
  * Config is loaded from src/data/snaptrade-config.json (gitignored).
- * Uses the Web Crypto API for signing — works in Tauri WebView.
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import snapConfig from '../data/snaptrade-config.json'
-
-const BASE_URL = 'https://api.snaptrade.com'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -65,130 +64,75 @@ export interface BrokeragePosition {
   gainLossPct: number
 }
 
-// ─── Signing ──────────────────────────────────────────────────────────────────
+// ─── Rust backend call ────────────────────────────────────────────────────────
+// The Rust `fetch_snaptrade_accounts` command signs requests server-side and
+// returns a JSON string: Array<{ account, balances, positions }>.
 
-async function hmacSha256Base64(message: string, key: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(key),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  )
-  const sig = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(message))
-  // Convert ArrayBuffer to base64
-  const bytes = new Uint8Array(sig)
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-async function signedFetch(path: string): Promise<Response> {
-  const { clientId, consumerKey, userId, userSecret } = snapConfig
-  const timestamp = Math.floor(Date.now() / 1000).toString()
-
-  // Sign: HMAC-SHA256(key=consumerKey, data=clientId+timestamp)
-  const message = clientId + timestamp
-  const signature = await hmacSha256Base64(message, consumerKey)
-
-  // Query params — signature is NOT in the query string
-  const query = new URLSearchParams({
-    userId,
-    userSecret,
-    clientId,
-    timestamp,
-  }).toString()
-
-  const url = `${BASE_URL}${path}?${query}`
-
-  return fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      Signature: signature, // HMAC-SHA256 goes in header (capital S), not query param
-    },
-  })
-}
-
-// ─── API calls ────────────────────────────────────────────────────────────────
-
-async function fetchAccounts(): Promise<SnapAccount[]> {
-  const res = await signedFetch('/api/v1/accounts')
-  if (!res.ok) throw new Error(`accounts ${res.status}: ${await res.text()}`)
-  return res.json()
-}
-
-async function fetchBalances(accountId: string): Promise<SnapBalance[]> {
-  const res = await signedFetch(`/api/v1/accounts/${accountId}/balances`)
-  if (!res.ok) throw new Error(`balances ${res.status}: ${await res.text()}`)
-  return res.json()
-}
-
-async function fetchPositions(accountId: string): Promise<SnapPosition[]> {
-  const res = await signedFetch(`/api/v1/accounts/${accountId}/positions`)
-  if (!res.ok) throw new Error(`positions ${res.status}: ${await res.text()}`)
-  return res.json()
+interface RawEnriched {
+  account: SnapAccount
+  balances: SnapBalance[]
+  positions: SnapPosition[]
 }
 
 // ─── Aggregation ──────────────────────────────────────────────────────────────
 
 export async function loadBrokerageAccounts(): Promise<BrokerageAccount[]> {
-  const accounts = await fetchAccounts()
-  if (!accounts || accounts.length === 0) return []
+  const { clientId, consumerKey, userId, userSecret } = snapConfig
 
-  const results = await Promise.allSettled(
-    accounts.map(async (acct): Promise<BrokerageAccount> => {
-      const [balancesRaw, positionsRaw] = await Promise.all([
-        fetchBalances(acct.id).catch(() => [] as SnapBalance[]),
-        fetchPositions(acct.id).catch(() => [] as SnapPosition[]),
-      ])
+  const jsonStr = await invoke<string>('fetch_snaptrade_accounts', {
+    clientId,
+    consumerKey,
+    userId,
+    userSecret,
+  })
 
-      // Cash balance — pick USD first, fall back to first entry
-      const usdBalance = balancesRaw.find(b => b.currency?.code === 'USD')
-      const cashBalance = usdBalance?.cash ?? balancesRaw[0]?.cash ?? 0
+  const enriched: RawEnriched[] = JSON.parse(jsonStr)
+  if (!enriched || enriched.length === 0) return []
 
-      // Map positions
-      const positions: BrokeragePosition[] = positionsRaw
-        .filter(p => p && p.symbol?.symbol?.symbol)
-        .map(p => {
-          const shares = (p.units ?? 0) + (p.fractional_units ?? 0)
-          const marketValue = shares * p.price
-          const avgCost = p.average_purchase_price ?? 0
-          const costBasis = avgCost * shares
-          const gainLoss = marketValue - costBasis
-          const gainLossPct = costBasis > 0 ? (gainLoss / costBasis) * 100 : 0
-          return {
-            ticker: p.symbol.symbol.symbol,
-            description: p.symbol.symbol.description ?? '',
-            shares,
-            currentPrice: p.price ?? 0,
-            marketValue,
-            avgCost,
-            gainLoss,
-            gainLossPct,
-          }
-        })
-        .sort((a, b) => b.marketValue - a.marketValue)
+  return enriched.map((item): BrokerageAccount => {
+    const acct = item.account
+    const balancesRaw: SnapBalance[] = item.balances ?? []
+    const positionsRaw: SnapPosition[] = item.positions ?? []
 
-      const positionsValue = positions.reduce((s, p) => s + p.marketValue, 0)
+    // Cash balance — pick USD first, fall back to first entry
+    const usdBalance = balancesRaw.find(b => b.currency?.code === 'USD')
+    const cashBalance = usdBalance?.cash ?? balancesRaw[0]?.cash ?? 0
 
-      return {
-        id: acct.id,
-        name: acct.name || 'Brokerage Account',
-        institution: acct.institution_name || 'Unknown',
-        accountNumber: acct.number || '',
-        accountType: acct.meta?.type || 'individual',
-        status: acct.meta?.status || 'ACTIVE',
-        cashBalance,
-        totalValue: cashBalance + positionsValue,
-        positions,
-      }
-    })
-  )
+    // Map positions
+    const positions: BrokeragePosition[] = positionsRaw
+      .filter(p => p && p.symbol?.symbol?.symbol)
+      .map(p => {
+        const shares = (p.units ?? 0) + (p.fractional_units ?? 0)
+        const marketValue = shares * p.price
+        const avgCost = p.average_purchase_price ?? 0
+        const costBasis = avgCost * shares
+        const gainLoss = marketValue - costBasis
+        const gainLossPct = costBasis > 0 ? (gainLoss / costBasis) * 100 : 0
+        return {
+          ticker: p.symbol.symbol.symbol,
+          description: p.symbol.symbol.description ?? '',
+          shares,
+          currentPrice: p.price ?? 0,
+          marketValue,
+          avgCost,
+          gainLoss,
+          gainLossPct,
+        }
+      })
+      .sort((a, b) => b.marketValue - a.marketValue)
 
-  return results
-    .filter((r): r is PromiseFulfilledResult<BrokerageAccount> => r.status === 'fulfilled')
-    .map(r => r.value)
+    const positionsValue = positions.reduce((s, p) => s + p.marketValue, 0)
+
+    return {
+      id: acct.id,
+      name: acct.name || 'Brokerage Account',
+      institution: acct.institution_name || 'Unknown',
+      accountNumber: acct.number || '',
+      accountType: acct.meta?.type || 'individual',
+      status: acct.meta?.status || 'ACTIVE',
+      cashBalance,
+      totalValue: cashBalance + positionsValue,
+      positions,
+    }
+  })
 }
