@@ -474,6 +474,8 @@ const PROJECT_AGENTS: Record<string, string[]> = {
   'bitcoin-merch':            ['Stitch 🧵'],
   'satstitch':                ['Stitch 🧵'],
   'dashboard-app':            ['Dash 🖥️'],
+  'financial-dashboard':      ['Dash 🖥️'],
+  'contract':                 ['Rex 🎨'],
   'aaay-o-kaay':              ['Kay 💛'],
 }
 

@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Bitcoin cold storage addresses — contains personal wallet addresses, DO NOT COMMIT
+src/data/btc-addresses.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

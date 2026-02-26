@@ -113,6 +113,13 @@ const mockAccounts: Account[] = [
   { id: 'crypto-eth-hw', name: 'Hardware Wallet', institution: 'Ledger', type: 'crypto_wallet', value: 18500, dailyChange: 1.87, allocation: 0, chain: 'ETH', lastUpdated: '2026-02-18' },
   { id: 'crypto-sol', name: 'Phantom Wallet', institution: 'Phantom', type: 'crypto_wallet', value: 8200, dailyChange: 3.41, allocation: 0, chain: 'SOL', lastUpdated: '2026-02-18' },
   { id: 'crypto-eth-mm', name: 'MetaMask', institution: 'MetaMask', type: 'crypto_wallet', value: 5400, dailyChange: 1.92, allocation: 0, chain: 'ETH', lastUpdated: '2026-02-18' },
+  // Bitcoin Cold Storage (Ledger hardware wallet)
+  // ⚠️ NOTE: Value here is a static placeholder — real-time balances are fetched live
+  //          from mempool.space in the Bitcoin Wallets card on the Finances page.
+  //          This entry exists so cold storage appears in the account-type summary.
+  //          Update this value manually after reviewing the live card, or leave at 0
+  //          and rely solely on the Bitcoin Wallets card for accurate BTC balances.
+  { id: 'btc-cold-storage', name: 'Cold Storage (Live via Mempool)', institution: 'Ledger', type: 'bitcoin_cold_storage', value: 0, dailyChange: 0, allocation: 0, chain: 'BTC', lastUpdated: '2026-02-26' },
   // Fold
   { id: 'fold', name: 'Bitcoin Rewards', institution: 'Fold', type: 'crypto_exchange', value: 3200, dailyChange: 2.15, allocation: 0, chain: 'BTC', lastUpdated: '2026-02-18' },
   // Strike — now pulled live via API
@@ -163,7 +170,7 @@ export function getPortfolio(): PortfolioSummary {
     .filter(a => ['brokerage', '401k', 'ira'].includes(a.type))
     .reduce((s, a) => s + a.value, 0)
   const crypto = accounts
-    .filter(a => ['crypto_wallet', 'crypto_exchange'].includes(a.type))
+    .filter(a => ['crypto_wallet', 'crypto_exchange', 'bitcoin_cold_storage'].includes(a.type))
     .reduce((s, a) => s + a.value, 0)
   const alternative = accounts
     .filter(a => a.type === 'alternative')
@@ -194,6 +201,7 @@ export function getDataSources(): DataSource[] {
     { id: 'robinhood', name: 'Robinhood', status: 'not_configured', lastSync: null, accountCount: 1 },
     { id: 'etrade', name: 'E*Trade', status: 'not_configured', lastSync: null, accountCount: 1 },
     { id: 'ledger', name: 'Ledger (Hardware)', status: 'manual', lastSync: '2026-02-15T10:00:00Z', accountCount: 2 },
+    { id: 'mempool', name: 'Mempool.space (BTC cold storage)', status: 'connected', lastSync: new Date().toISOString(), accountCount: 0 },
     { id: 'phantom', name: 'Phantom', status: 'not_configured', lastSync: null, accountCount: 1 },
     { id: 'metamask', name: 'MetaMask', status: 'not_configured', lastSync: null, accountCount: 1 },
     { id: 'coinbase', name: 'Coinbase', status: coinbaseData ? 'connected' : 'not_configured', lastSync: coinbaseData?.fetched_at || null, accountCount: coinbaseData?.account_count || 0 },

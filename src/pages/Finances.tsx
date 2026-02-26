@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData } from '../data/financial-store'
 import type { Account, DataSource } from '../types/finance'
+import btcAddressConfig from '../data/btc-addresses.json'
 
 const fmt = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 const fmtPct = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%'
@@ -160,6 +161,182 @@ function groupBy<T>(arr: T[], key: (item: T) => string): Record<string, T[]> {
   }, {} as Record<string, T[]>)
 }
 
+// ─── Bitcoin Cold Storage ────────────────────────────────────────────────────
+
+interface BtcAddressCfg {
+  label: string
+  address: string
+}
+
+interface BtcWalletRow extends BtcAddressCfg {
+  btcBalance: number | null
+  usdValue: number | null
+  loading: boolean
+  error: string | null
+}
+
+const PLACEHOLDER = 'YOUR_ADDRESS_HERE'
+const SATS_PER_BTC = 1e8
+
+function abbrevAddr(addr: string): string {
+  if (addr === PLACEHOLDER) return '(not configured)'
+  if (addr.length <= 12) return addr
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`
+}
+
+function fmtBtc(n: number): string {
+  return n.toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' BTC'
+}
+
+function BitcoinWallets() {
+  const addresses: BtcAddressCfg[] = btcAddressConfig
+  const [btcPrice, setBtcPrice] = useState<number | null>(null)
+  const [wallets, setWallets] = useState<BtcWalletRow[]>(
+    addresses.map(a => ({ ...a, btcBalance: null, usdValue: null, loading: a.address !== PLACEHOLDER, error: a.address === PLACEHOLDER ? 'Add your address to btc-addresses.json' : null }))
+  )
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const priceRef = useRef<number | null>(null)
+
+  const fetchAll = useCallback(async () => {
+    // Fetch BTC/USD price
+    let price = priceRef.current
+    try {
+      const res = await fetch('https://mempool.space/api/v1/prices')
+      const data = await res.json()
+      price = data.USD
+      priceRef.current = price
+      setBtcPrice(price)
+    } catch {
+      // keep existing price if fetch fails
+    }
+
+    // Fetch balance for each configured address (skip placeholders)
+    const updated: BtcWalletRow[] = await Promise.all(
+      addresses.map(async (cfg) => {
+        if (cfg.address === PLACEHOLDER) {
+          return { ...cfg, btcBalance: null, usdValue: null, loading: false, error: 'Add your address to btc-addresses.json' }
+        }
+        try {
+          const res = await fetch(`https://mempool.space/api/address/${cfg.address}`)
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const data = await res.json()
+          const sats: number = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum
+          const btcBalance = sats / SATS_PER_BTC
+          return {
+            ...cfg,
+            btcBalance,
+            usdValue: price !== null ? btcBalance * price : null,
+            loading: false,
+            error: null,
+          }
+        } catch (e) {
+          return { ...cfg, btcBalance: null, usdValue: null, loading: false, error: 'Fetch failed — check address or network' }
+        }
+      })
+    )
+    setWallets(updated)
+    setLastUpdated(new Date())
+  }, [addresses])
+
+  useEffect(() => {
+    fetchAll()
+    const interval = setInterval(fetchAll, 60_000)
+    return () => clearInterval(interval)
+  }, [fetchAll])
+
+  const configuredWallets = wallets.filter(w => w.address !== PLACEHOLDER)
+  const totalBtc = configuredWallets.reduce((s, w) => s + (w.btcBalance ?? 0), 0)
+  const totalUsd = configuredWallets.reduce((s, w) => s + (w.usdValue ?? 0), 0)
+  const anyLoaded = configuredWallets.some(w => w.btcBalance !== null)
+
+  return (
+    <div className="bg-orange-500/5 backdrop-blur-xl rounded-2xl border border-orange-500/20 p-5 mb-8">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            🔐 Bitcoin Cold Storage
+          </h2>
+          {btcPrice !== null && (
+            <span className="text-xs text-orange-300/60 font-mono">
+              1 BTC = ${btcPrice.toLocaleString('en-US')}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={fetchAll}
+          className="text-white/30 hover:text-white/70 text-sm transition-colors px-2 py-1 rounded-lg hover:bg-white/5"
+          title="Refresh blockchain data"
+        >
+          ↻
+        </button>
+      </div>
+
+      {/* Address Rows */}
+      <div className="space-y-2">
+        {wallets.map((w, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between px-4 py-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/8 transition-all"
+          >
+            <div className="min-w-0">
+              <div className="text-white font-medium text-sm">{w.label}</div>
+              <div className="text-white/35 text-xs font-mono mt-0.5">{abbrevAddr(w.address)}</div>
+              {w.error && !w.loading && w.address !== PLACEHOLDER && (
+                <div className="text-red-400/80 text-xs mt-1">⚠ {w.error}</div>
+              )}
+              {w.address === PLACEHOLDER && (
+                <div className="text-yellow-500/70 text-xs mt-1">⚙ {w.error}</div>
+              )}
+            </div>
+            <div className="text-right shrink-0 ml-4">
+              {w.loading ? (
+                <div className="text-white/25 text-sm animate-pulse">Fetching…</div>
+              ) : w.address === PLACEHOLDER ? (
+                <div className="text-white/20 text-sm">—</div>
+              ) : w.error ? (
+                <div className="text-red-400/60 text-sm">—</div>
+              ) : (
+                <>
+                  <div className="text-white font-bold text-sm">{w.btcBalance !== null ? fmtBtc(w.btcBalance) : '—'}</div>
+                  <div className="text-orange-400 text-xs mt-0.5">{w.usdValue !== null ? fmt(w.usdValue) : '—'}</div>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Total row */}
+      {anyLoaded && (
+        <div className="mt-4 pt-4 border-t border-orange-500/15 flex justify-between items-center">
+          <div>
+            <div className="text-white/60 text-sm">Total Cold Storage</div>
+            {lastUpdated && (
+              <div className="text-white/20 text-xs mt-0.5">
+                Updated {lastUpdated.toLocaleTimeString()} · auto-refresh 60s
+              </div>
+            )}
+          </div>
+          <div className="text-right">
+            <div className="text-white font-bold">{fmtBtc(totalBtc)}</div>
+            <div className="text-orange-400 text-sm">{fmt(totalUsd)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* No addresses configured yet */}
+      {addresses.every(a => a.address === PLACEHOLDER) && (
+        <div className="mt-4 pt-4 border-t border-orange-500/10 text-orange-300/40 text-xs">
+          Edit <code className="font-mono">src/data/btc-addresses.json</code> to add your Ledger wallet addresses.
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function Finances() {
   const [dataVersion, setDataVersion] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
@@ -225,6 +402,9 @@ export default function Finances() {
         <SummaryCard label="Alternatives" value={portfolio.alternativeInvestments} icon="🎨" color="pink-500" />
         <SummaryCard label="Real Estate" value={portfolio.realEstate} icon="🏠" color="emerald-500" />
       </div>
+
+      {/* Bitcoin Cold Storage */}
+      <BitcoinWallets />
 
       {/* Account Sections */}
       <div className="space-y-6 mb-8">

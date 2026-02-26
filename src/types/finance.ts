@@ -2,7 +2,7 @@ export interface Account {
   id: string
   name: string
   institution: string
-  type: 'brokerage' | '401k' | 'ira' | 'crypto_wallet' | 'crypto_exchange' | 'alternative' | 'debit' | 'real_estate'
+  type: 'brokerage' | '401k' | 'ira' | 'crypto_wallet' | 'crypto_exchange' | 'alternative' | 'debit' | 'real_estate' | 'bitcoin_cold_storage'
   value: number
   dailyChange: number // percentage
   allocation: number // percentage of total
