@@ -90,24 +90,20 @@ async function signedFetch(path: string): Promise<Response> {
   const { clientId, consumerKey, userId, userSecret } = snapConfig
   const timestamp = Math.floor(Date.now() / 1000).toString()
 
-  // Build query params in deterministic order (without signature)
-  const paramPairs: [string, string][] = [
-    ['clientId', clientId],
-    ['timestamp', timestamp],
-    ['userId', userId],
-    ['userSecret', userSecret],
-  ]
-
-  const queryStringNoSig = paramPairs
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join('&')
-
-  // Sign: HMAC-SHA256(path + '?' + query_without_sig, consumerKey)
-  const message = path + '?' + queryStringNoSig
+  // Sign: HMAC-SHA256(key=consumerKey, data=clientId+timestamp)
+  const message = clientId + timestamp
   const signature = await hmacSha256Base64(message, consumerKey)
 
-  const finalQuery = queryStringNoSig + '&signature=' + encodeURIComponent(signature)
-  const url = `${BASE_URL}${path}?${finalQuery}`
+  // Append auth params + signature to query string
+  const query = [
+    `userId=${encodeURIComponent(userId)}`,
+    `userSecret=${encodeURIComponent(userSecret)}`,
+    `clientId=${encodeURIComponent(clientId)}`,
+    `timestamp=${encodeURIComponent(timestamp)}`,
+    `signature=${encodeURIComponent(signature)}`,
+  ].join('&')
+
+  const url = `${BASE_URL}${path}?${query}`
 
   return fetch(url, {
     headers: { Accept: 'application/json' },
