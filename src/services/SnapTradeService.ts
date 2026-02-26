@@ -94,19 +94,21 @@ async function signedFetch(path: string): Promise<Response> {
   const message = clientId + timestamp
   const signature = await hmacSha256Base64(message, consumerKey)
 
-  // Append auth params + signature to query string
-  const query = [
-    `userId=${encodeURIComponent(userId)}`,
-    `userSecret=${encodeURIComponent(userSecret)}`,
-    `clientId=${encodeURIComponent(clientId)}`,
-    `timestamp=${encodeURIComponent(timestamp)}`,
-    `signature=${encodeURIComponent(signature)}`,
-  ].join('&')
+  // Query params — signature is NOT in the query string
+  const query = new URLSearchParams({
+    userId,
+    userSecret,
+    clientId,
+    timestamp,
+  }).toString()
 
   const url = `${BASE_URL}${path}?${query}`
 
   return fetch(url, {
-    headers: { Accept: 'application/json' },
+    headers: {
+      Accept: 'application/json',
+      Signature: signature, // HMAC-SHA256 goes in header (capital S), not query param
+    },
   })
 }
 
