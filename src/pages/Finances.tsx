@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData } from '../data/financial-store'
+import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts } from '../data/financial-store'
 import type { Account, DataSource } from '../types/finance'
 import btcAddressConfig from '../data/btc-addresses.json'
+import { loadBrokerageAccounts } from '../services/SnapTradeService'
+import type { BrokerageAccount, BrokeragePosition } from '../services/SnapTradeService'
 
 const fmt = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 const fmtPct = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%'
@@ -335,6 +337,201 @@ function BitcoinWallets() {
   )
 }
 
+// ─── Brokerage Accounts (SnapTrade live data) ─────────────────────────────────
+
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+
+const fmtDollar = (n: number) =>
+  '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const fmtShares = (n: number) =>
+  n % 1 === 0 ? n.toFixed(0) : n.toFixed(4).replace(/0+$/, '')
+
+function PositionRow({ pos }: { pos: BrokeragePosition }) {
+  const glColor = pos.gainLoss >= 0 ? 'text-green-400' : 'text-red-400'
+  return (
+    <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-4 gap-y-0.5 py-2 px-3 rounded-lg hover:bg-white/5 transition-colors text-sm">
+      <div>
+        <span className="text-white font-semibold font-mono">{pos.ticker}</span>
+        {pos.description && (
+          <span className="text-white/40 text-xs ml-2 truncate">{pos.description}</span>
+        )}
+      </div>
+      <div className="text-white/60 text-right">{fmtShares(pos.shares)} sh</div>
+      <div className="text-white/70 text-right">{fmtDollar(pos.currentPrice)}</div>
+      <div className="text-white font-medium text-right">{fmtDollar(pos.marketValue)}</div>
+      <div className={`${glColor} text-right font-mono`}>
+        {pos.gainLoss >= 0 ? '+' : '−'}{fmtDollar(pos.gainLoss)}
+        <span className="text-xs ml-1 opacity-70">({pos.gainLossPct >= 0 ? '+' : ''}{pos.gainLossPct.toFixed(2)}%)</span>
+      </div>
+    </div>
+  )
+}
+
+function BrokerageAccountCard({ acct }: { acct: BrokerageAccount }) {
+  const [expanded, setExpanded] = useState(true)
+  const totalGainLoss = acct.positions.reduce((s, p) => s + p.gainLoss, 0)
+
+  return (
+    <div className="bg-white/5 backdrop-blur-xl rounded-xl border border-white/10 overflow-hidden">
+      {/* Header */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/5 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-white font-semibold">{acct.institution}</span>
+          <span className="text-white/40 text-sm">{acct.name}</span>
+          {acct.accountNumber && (
+            <span className="text-white/25 text-xs font-mono">···{acct.accountNumber.slice(-4)}</span>
+          )}
+          <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+            acct.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+          }`}>
+            {acct.status}
+          </span>
+        </div>
+        <div className="flex items-center gap-6">
+          <div className="text-right">
+            <div className="text-white font-bold text-lg">{fmt(acct.totalValue)}</div>
+            <div className="text-white/40 text-xs">
+              Cash: {fmtDollar(acct.cashBalance)}
+            </div>
+          </div>
+          {totalGainLoss !== 0 && (
+            <div className={`text-sm font-mono ${totalGainLoss >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {totalGainLoss >= 0 ? '+' : '−'}{fmtDollar(totalGainLoss)}
+            </div>
+          )}
+          <span className="text-white/30 text-sm">{expanded ? '▾' : '▸'}</span>
+        </div>
+      </button>
+
+      {/* Positions table */}
+      {expanded && (
+        <div className="border-t border-white/5">
+          {acct.positions.length > 0 ? (
+            <>
+              {/* Column headers */}
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-4 px-3 py-1.5 text-xs text-white/30 font-medium">
+                <div>Symbol / Name</div>
+                <div className="text-right">Shares</div>
+                <div className="text-right">Price</div>
+                <div className="text-right">Value</div>
+                <div className="text-right">Gain / Loss</div>
+              </div>
+              <div className="px-2 pb-3 space-y-0.5">
+                {acct.positions.map(pos => (
+                  <PositionRow key={pos.ticker} pos={pos} />
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="px-5 py-3 text-white/30 text-sm italic">No positions held</div>
+          )}
+          {/* Cash row */}
+          {acct.cashBalance > 0.01 && (
+            <div className="border-t border-white/5 grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-4 px-3 py-2 text-sm text-white/40">
+              <div className="col-span-3">Cash / Money Market</div>
+              <div className="text-right text-white/60">{fmtDollar(acct.cashBalance)}</div>
+              <div />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BrokerageAccounts({ onDataLoaded }: { onDataLoaded: () => void }) {
+  const [accounts, setAccounts] = useState<BrokerageAccount[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await loadBrokerageAccounts()
+      setAccounts(data)
+      setSnaptradeAccounts(data)
+      setLastUpdated(new Date())
+      onDataLoaded()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load brokerage data')
+    } finally {
+      setLoading(false)
+    }
+  }, [onDataLoaded])
+
+  useEffect(() => {
+    load()
+    const interval = setInterval(load, REFRESH_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [load])
+
+  const totalBrokerageValue = accounts.reduce((s, a) => s + a.totalValue, 0)
+
+  return (
+    <div className="mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+          📈 Brokerage Accounts
+          {totalBrokerageValue > 0 && (
+            <span className="text-white/40 text-sm font-normal">{fmt(totalBrokerageValue)}</span>
+          )}
+          <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 font-normal">Live · SnapTrade</span>
+        </h2>
+        <div className="flex items-center gap-3">
+          {lastUpdated && !loading && (
+            <span className="text-white/25 text-xs">
+              Updated {lastUpdated.toLocaleTimeString()} · auto-refresh 5m
+            </span>
+          )}
+          <button
+            onClick={load}
+            disabled={loading}
+            className="text-white/30 hover:text-white/70 text-sm transition-colors px-2 py-1 rounded-lg hover:bg-white/5 disabled:opacity-40"
+            title="Refresh brokerage data"
+          >
+            {loading ? '⟳' : '↻'}
+          </button>
+        </div>
+      </div>
+
+      {loading && accounts.length === 0 && (
+        <div className="space-y-3">
+          {[1, 2].map(i => (
+            <div key={i} className="bg-white/5 backdrop-blur-xl rounded-xl border border-white/10 p-5 animate-pulse">
+              <div className="h-4 bg-white/10 rounded w-48 mb-3" />
+              <div className="h-6 bg-white/10 rounded w-32" />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-400 text-sm">
+          ⚠ {error}
+        </div>
+      )}
+
+      {!loading && !error && accounts.length === 0 && (
+        <div className="bg-white/5 rounded-xl p-5 text-white/40 text-sm italic">
+          No brokerage accounts found. Check your SnapTrade connection.
+        </div>
+      )}
+
+      <div className="space-y-4">
+        {accounts.map(acct => (
+          <BrokerageAccountCard key={acct.id} acct={acct} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function Finances() {
@@ -355,6 +552,11 @@ export default function Finances() {
     await Promise.all([refreshCoinbaseData(), refreshStrikeData()])
     setDataVersion(v => v + 1)
     setRefreshing(false)
+  }, [])
+
+  // Called when SnapTrade data loads so DataSources panel reflects connected status
+  const handleSnaptradeLoaded = useCallback(() => {
+    setDataVersion(v => v + 1)
   }, [])
 
   const accounts = useMemo(() => getAccounts(), [dataVersion, coinbaseLoaded])
@@ -405,6 +607,9 @@ export default function Finances() {
 
       {/* Bitcoin Cold Storage */}
       <BitcoinWallets />
+
+      {/* Brokerage Accounts — live via SnapTrade */}
+      <BrokerageAccounts onDataLoaded={handleSnaptradeLoaded} />
 
       {/* Account Sections */}
       <div className="space-y-6 mb-8">

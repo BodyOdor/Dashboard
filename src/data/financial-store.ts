@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { Account, PortfolioSummary, DataSource } from '../types/finance'
+import type { BrokerageAccount } from '../services/SnapTradeService'
 
 // Coinbase live data types
 interface CoinbaseHolding {
@@ -21,6 +22,21 @@ interface CoinbaseData {
 // Cached provider data
 let coinbaseData: CoinbaseData | null = null
 let strikeData: CoinbaseData | null = null  // Same shape
+let snaptradeAccounts: BrokerageAccount[] | null = null
+let snaptradeLastSync: string | null = null
+
+export function setSnaptradeAccounts(accounts: BrokerageAccount[]): void {
+  snaptradeAccounts = accounts
+  snaptradeLastSync = new Date().toISOString()
+}
+
+export function getSnaptradeAccounts(): BrokerageAccount[] | null {
+  return snaptradeAccounts
+}
+
+export function getSnaptradeLastSync(): string | null {
+  return snaptradeLastSync
+}
 export async function loadCoinbaseData(): Promise<CoinbaseData | null> {
   try {
     const raw = await invoke<string>('read_coinbase_data')
@@ -198,8 +214,7 @@ export function getPortfolio(): PortfolioSummary {
 export function getDataSources(): DataSource[] {
   return [
     { id: 'fidelity', name: 'Fidelity', status: 'not_configured', lastSync: null, accountCount: 3 },
-    { id: 'robinhood', name: 'Robinhood', status: 'not_configured', lastSync: null, accountCount: 1 },
-    { id: 'etrade', name: 'E*Trade', status: 'not_configured', lastSync: null, accountCount: 1 },
+    { id: 'snaptrade', name: 'SnapTrade (Robinhood + E*Trade)', status: snaptradeAccounts ? 'connected' : 'not_configured', lastSync: snaptradeLastSync, accountCount: snaptradeAccounts?.length ?? 0 },
     { id: 'ledger', name: 'Ledger (Hardware)', status: 'manual', lastSync: '2026-02-15T10:00:00Z', accountCount: 2 },
     { id: 'mempool', name: 'Mempool.space (BTC cold storage)', status: 'connected', lastSync: new Date().toISOString(), accountCount: 0 },
     { id: 'phantom', name: 'Phantom', status: 'not_configured', lastSync: null, accountCount: 1 },
