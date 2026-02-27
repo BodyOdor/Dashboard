@@ -14,6 +14,7 @@ dist-ssr
 
 # Bitcoin cold storage addresses — contains personal wallet addresses, DO NOT COMMIT
 src/data/btc-addresses.json
+src/data/sol-addresses.json
 
 # SnapTrade credentials — contains API keys and user secrets, DO NOT COMMIT
 src/data/snaptrade-config.json

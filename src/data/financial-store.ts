@@ -25,6 +25,7 @@ let strikeData: CoinbaseData | null = null  // Same shape
 let snaptradeAccounts: BrokerageAccount[] | null = null
 let snaptradeLastSync: string | null = null
 let btcColdStorageUsd: number = 0
+let solColdStorageUsd: number = 0
 
 export function setBtcColdStorageUsd(usd: number): void {
   btcColdStorageUsd = usd
@@ -32,6 +33,14 @@ export function setBtcColdStorageUsd(usd: number): void {
 
 export function getBtcColdStorageUsd(): number {
   return btcColdStorageUsd
+}
+
+export function setSolColdStorageUsd(usd: number): void {
+  solColdStorageUsd = usd
+}
+
+export function getSolColdStorageUsd(): number {
+  return solColdStorageUsd
 }
 
 export function setSnaptradeAccounts(accounts: BrokerageAccount[]): void {
@@ -172,13 +181,13 @@ export function getNetWorth(): number {
 
 export function getPortfolio(): PortfolioSummary {
   const accounts = getAllAccounts()
-  const total = accounts.reduce((s, a) => s + a.value, 0) + btcColdStorageUsd
+  const total = accounts.reduce((s, a) => s + a.value, 0) + btcColdStorageUsd + solColdStorageUsd
   const traditional = accounts
     .filter(a => ['brokerage', '401k', 'ira'].includes(a.type))
     .reduce((s, a) => s + a.value, 0)
   const crypto = accounts
     .filter(a => ['crypto_wallet', 'crypto_exchange', 'bitcoin_cold_storage'].includes(a.type))
-    .reduce((s, a) => s + a.value, 0) + btcColdStorageUsd
+    .reduce((s, a) => s + a.value, 0) + btcColdStorageUsd + solColdStorageUsd
   const alternative = accounts
     .filter(a => a.type === 'alternative')
     .reduce((s, a) => s + a.value, 0)
@@ -207,6 +216,7 @@ export function getDataSources(): DataSource[] {
     { id: 'fidelity', name: 'Fidelity', status: 'not_configured', lastSync: null, accountCount: 3 },
     { id: 'snaptrade', name: 'SnapTrade (Robinhood + E*Trade)', status: snaptradeAccounts ? 'connected' : 'not_configured', lastSync: snaptradeLastSync, accountCount: snaptradeAccounts?.length ?? 0 },
     { id: 'mempool', name: 'Mempool.space (BTC cold storage)', status: 'connected', lastSync: new Date().toISOString(), accountCount: 0 },
+    { id: 'solana-rpc', name: 'Solana RPC (SOL cold storage)', status: 'connected', lastSync: new Date().toISOString(), accountCount: 0 },
     { id: 'coinbase', name: 'Coinbase', status: coinbaseData ? 'connected' : 'not_configured', lastSync: coinbaseData?.fetched_at || null, accountCount: coinbaseData?.account_count || 0 },
     { id: 'strike', name: 'Strike', status: strikeData ? 'connected' : 'not_configured', lastSync: strikeData?.fetched_at || null, accountCount: strikeData?.account_count || 0 },
     { id: 'masterworks', name: 'Masterworks', status: 'manual', lastSync: '2026-02-10T08:00:00Z', accountCount: 1 },

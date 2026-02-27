@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts, setBtcColdStorageUsd } from '../data/financial-store'
+import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts, setBtcColdStorageUsd, setSolColdStorageUsd } from '../data/financial-store'
 import type { Account, DataSource } from '../types/finance'
 import btcAddressConfig from '../data/btc-addresses.json'
+import solAddressConfig from '../data/sol-addresses.json'
 import { loadBrokerageAccounts } from '../services/SnapTradeService'
 import type { BrokerageAccount, BrokeragePosition } from '../services/SnapTradeService'
 
@@ -353,6 +354,176 @@ function BitcoinWallets({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => vo
   )
 }
 
+// ─── Solana Cold Storage ─────────────────────────────────────────────────────
+
+interface SolAddressCfg {
+  label: string
+  address: string
+}
+
+interface SolWalletRow extends SolAddressCfg {
+  solBalance: number | null
+  usdValue: number | null
+  loading: boolean
+  error: string | null
+}
+
+function fmtSol(n: number): string {
+  return n.toFixed(4) + ' SOL'
+}
+
+function SolanaWallets({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => void }) {
+  const addresses: SolAddressCfg[] = solAddressConfig
+  const [collapsed, setCollapsed] = useState(true)
+  const [solPrice, setSolPrice] = useState<number | null>(null)
+  const [wallets, setWallets] = useState<SolWalletRow[]>(
+    addresses.map(a => ({ ...a, solBalance: null, usdValue: null, loading: true, error: null }))
+  )
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const priceRef = useRef<number | null>(null)
+
+  const fetchAll = useCallback(async () => {
+    // Fetch SOL/USD price
+    let price = priceRef.current
+    try {
+      const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd')
+      const data = await res.json()
+      price = data.solana.usd
+      priceRef.current = price
+      setSolPrice(price)
+    } catch {
+      // keep existing price
+    }
+
+    // Fetch balance for each address via Solana RPC
+    const updated: SolWalletRow[] = await Promise.all(
+      addresses.map(async (cfg) => {
+        try {
+          const res = await fetch('https://api.mainnet-beta.solana.com', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0', id: 1,
+              method: 'getBalance',
+              params: [cfg.address, { commitment: 'confirmed' }]
+            })
+          })
+          const data = await res.json()
+          const lamports = data.result?.value ?? 0
+          const solBalance = lamports / 1_000_000_000
+          return {
+            ...cfg,
+            solBalance,
+            usdValue: price !== null ? solBalance * price : null,
+            loading: false,
+            error: null,
+          }
+        } catch {
+          return { ...cfg, solBalance: null, usdValue: null, loading: false, error: 'Fetch failed — check address or network' }
+        }
+      })
+    )
+    setWallets(updated)
+    setLastUpdated(new Date())
+  }, [addresses])
+
+  useEffect(() => {
+    fetchAll()
+    const interval = setInterval(fetchAll, 60_000)
+    return () => clearInterval(interval)
+  }, [fetchAll])
+
+  const totalSol = wallets.reduce((s, w) => s + (w.solBalance ?? 0), 0)
+  const totalUsd = wallets.reduce((s, w) => s + (w.usdValue ?? 0), 0)
+  const anyLoaded = wallets.some(w => w.solBalance !== null)
+
+  useEffect(() => {
+    if (anyLoaded && onTotalLoaded) onTotalLoaded(totalUsd)
+  }, [totalUsd, anyLoaded, onTotalLoaded])
+
+  return (
+    <div className="bg-purple-500/5 backdrop-blur-xl rounded-2xl border border-purple-500/20 p-5 mb-8">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+        >
+          <span className="text-white/30 text-sm">{collapsed ? '▸' : '▾'}</span>
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            🔐 Solana Cold Storage
+          </h2>
+          {anyLoaded && (
+            <span className="text-white/60 text-sm font-normal">
+              {fmtSol(totalSol)} · {fmt(totalUsd)}
+            </span>
+          )}
+          {solPrice !== null && (
+            <span className="text-xs text-purple-300/60 font-mono">
+              1 SOL = ${solPrice.toLocaleString('en-US')}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={fetchAll}
+          className="text-white/30 hover:text-white/70 text-sm transition-colors px-2 py-1 rounded-lg hover:bg-white/5"
+          title="Refresh Solana data"
+        >
+          ↻
+        </button>
+      </div>
+
+      {/* Address Rows */}
+      {!collapsed && <div className="space-y-2">
+        {wallets.map((w, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between px-4 py-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/8 transition-all"
+          >
+            <div className="min-w-0">
+              <div className="text-white font-medium text-sm">{w.label}</div>
+              <div className="text-white/35 text-xs font-mono mt-0.5">{abbrevAddr(w.address)}</div>
+              {w.error && !w.loading && (
+                <div className="text-red-400/80 text-xs mt-1">⚠ {w.error}</div>
+              )}
+            </div>
+            <div className="text-right shrink-0 ml-4">
+              {w.loading ? (
+                <div className="text-white/25 text-sm animate-pulse">Fetching…</div>
+              ) : w.error ? (
+                <div className="text-red-400/60 text-sm">—</div>
+              ) : (
+                <>
+                  <div className="text-white font-bold text-sm">{w.solBalance !== null ? fmtSol(w.solBalance) : '—'}</div>
+                  <div className="text-purple-400 text-xs mt-0.5">{w.usdValue !== null ? fmt(w.usdValue) : '—'}</div>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>}
+
+      {/* Total row */}
+      {!collapsed && anyLoaded && (
+        <div className="mt-4 pt-4 border-t border-purple-500/15 flex justify-between items-center">
+          <div>
+            <div className="text-white/60 text-sm">Total Cold Storage</div>
+            {lastUpdated && (
+              <div className="text-white/20 text-xs mt-0.5">
+                Updated {lastUpdated.toLocaleTimeString()} · auto-refresh 60s
+              </div>
+            )}
+          </div>
+          <div className="text-right">
+            <div className="text-white font-bold">{fmtSol(totalSol)}</div>
+            <div className="text-purple-400 text-sm">{fmt(totalUsd)}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Brokerage Accounts (SnapTrade live data) ─────────────────────────────────
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
@@ -580,6 +751,11 @@ export default function Finances() {
     setDataVersion(v => v + 1)
   }, [])
 
+  const handleSolLoaded = useCallback((usd: number) => {
+    setSolColdStorageUsd(usd)
+    setDataVersion(v => v + 1)
+  }, [])
+
   const accounts = useMemo(() => getAccounts(), [dataVersion, coinbaseLoaded])
   const portfolio = useMemo(() => getPortfolio(), [dataVersion, coinbaseLoaded])
   const dataSources = useMemo(() => getDataSources(), [dataVersion, coinbaseLoaded])
@@ -628,6 +804,9 @@ export default function Finances() {
 
       {/* Bitcoin Cold Storage */}
       <BitcoinWallets onTotalLoaded={handleBtcLoaded} />
+
+      {/* Solana Cold Storage */}
+      <SolanaWallets onTotalLoaded={handleSolLoaded} />
 
       {/* Brokerage Accounts — live via SnapTrade */}
       <BrokerageAccounts onDataLoaded={handleSnaptradeLoaded} />
