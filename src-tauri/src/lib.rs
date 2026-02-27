@@ -598,28 +598,34 @@ async fn fetch_snaptrade_accounts(
         .as_secs()
         .to_string();
 
-    // Sign: HMAC-SHA256(key=consumerKey, data=clientId+timestamp) → base64
-    let message = format!("{}{}", client_id, timestamp);
-    let mut mac = Hmac::<Sha256>::new_from_slice(consumer_key.as_bytes())
-        .map_err(|e| format!("HMAC init error: {}", e))?;
-    mac.update(message.as_bytes());
-    let signature = general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    // Query string — only userId + userSecret in the URL, per SnapTrade spec
+    let query_string = format!("userId={}&userSecret={}", user_id, user_secret);
+
+    // Sign a request: HMAC-SHA256(key=consumerKey, data=JSON sig_object) → base64 STANDARD
+    // sig_object keys must be alphabetically ordered: content, path, query
+    let make_sig = |path: &str| -> Result<String, String> {
+        let sig_content = format!(
+            r#"{{"content":{{}},"path":"{}","query":"{}"}}"#,
+            path, query_string
+        );
+        let mut mac = Hmac::<Sha256>::new_from_slice(consumer_key.as_bytes())
+            .map_err(|e| format!("HMAC init error: {}", e))?;
+        mac.update(sig_content.as_bytes());
+        Ok(general_purpose::STANDARD.encode(mac.finalize().into_bytes()))
+    };
 
     let client = reqwest::Client::new();
 
-    // Build a signed URL for a given path
-    let build_url = |path: &str| -> String {
-        format!(
-            "https://api.snaptrade.com{}?userId={}&userSecret={}&clientId={}&timestamp={}",
-            path, user_id, user_secret, client_id, timestamp
-        )
-    };
+    // Fetch accounts list — each path gets its own signature
+    let accounts_path = "/api/v1/accounts";
+    let accounts_url = format!("https://api.snaptrade.com{}?{}", accounts_path, query_string);
+    let accounts_sig = make_sig(accounts_path)?;
 
-    // Fetch accounts list
-    let accounts_url = build_url("/api/v1/accounts");
     let accounts_resp = client
         .get(&accounts_url)
-        .header("Signature", &signature)
+        .header("Client-Id", &client_id)
+        .header("Timestamp", &timestamp)
+        .header("Signature", &accounts_sig)
         .header("Accept", "application/json")
         .send()
         .await
@@ -651,18 +657,28 @@ async fn fetch_snaptrade_accounts(
             continue;
         }
 
-        let balances_url = build_url(&format!("/api/v1/accounts/{}/balances", acct_id));
-        let positions_url = build_url(&format!("/api/v1/accounts/{}/positions", acct_id));
+        let balances_path = format!("/api/v1/accounts/{}/balances", acct_id);
+        let positions_path = format!("/api/v1/accounts/{}/positions", acct_id);
+
+        let balances_url = format!("https://api.snaptrade.com{}?{}", balances_path, query_string);
+        let positions_url = format!("https://api.snaptrade.com{}?{}", positions_path, query_string);
+
+        let balances_sig = make_sig(&balances_path)?;
+        let positions_sig = make_sig(&positions_path)?;
 
         let (bal_res, pos_res) = tokio::join!(
             client
                 .get(&balances_url)
-                .header("Signature", &signature)
+                .header("Client-Id", &client_id)
+                .header("Timestamp", &timestamp)
+                .header("Signature", &balances_sig)
                 .header("Accept", "application/json")
                 .send(),
             client
                 .get(&positions_url)
-                .header("Signature", &signature)
+                .header("Client-Id", &client_id)
+                .header("Timestamp", &timestamp)
+                .header("Signature", &positions_sig)
                 .header("Accept", "application/json")
                 .send()
         );
