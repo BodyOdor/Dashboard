@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts } from '../data/financial-store'
+import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts, setBtcColdStorageUsd } from '../data/financial-store'
 import type { Account, DataSource } from '../types/finance'
 import btcAddressConfig from '../data/btc-addresses.json'
 import { loadBrokerageAccounts } from '../services/SnapTradeService'
@@ -190,8 +190,9 @@ function fmtBtc(n: number): string {
   return n.toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' BTC'
 }
 
-function BitcoinWallets() {
+function BitcoinWallets({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => void }) {
   const addresses: BtcAddressCfg[] = btcAddressConfig
+  const [collapsed, setCollapsed] = useState(true)
   const [btcPrice, setBtcPrice] = useState<number | null>(null)
   const [wallets, setWallets] = useState<BtcWalletRow[]>(
     addresses.map(a => ({ ...a, btcBalance: null, usdValue: null, loading: a.address !== PLACEHOLDER, error: a.address === PLACEHOLDER ? 'Add your address to btc-addresses.json' : null }))
@@ -251,20 +252,33 @@ function BitcoinWallets() {
   const totalUsd = configuredWallets.reduce((s, w) => s + (w.usdValue ?? 0), 0)
   const anyLoaded = configuredWallets.some(w => w.btcBalance !== null)
 
+  useEffect(() => {
+    if (anyLoaded && onTotalLoaded) onTotalLoaded(totalUsd)
+  }, [totalUsd, anyLoaded, onTotalLoaded])
+
   return (
     <div className="bg-orange-500/5 backdrop-blur-xl rounded-2xl border border-orange-500/20 p-5 mb-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+        >
+          <span className="text-white/30 text-sm">{collapsed ? '▸' : '▾'}</span>
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             🔐 Bitcoin Cold Storage
           </h2>
+          {anyLoaded && (
+            <span className="text-white/60 text-sm font-normal">
+              {fmtBtc(totalBtc)} · {fmt(totalUsd)}
+            </span>
+          )}
           {btcPrice !== null && (
             <span className="text-xs text-orange-300/60 font-mono">
               1 BTC = ${btcPrice.toLocaleString('en-US')}
             </span>
           )}
-        </div>
+        </button>
         <button
           onClick={fetchAll}
           className="text-white/30 hover:text-white/70 text-sm transition-colors px-2 py-1 rounded-lg hover:bg-white/5"
@@ -275,7 +289,7 @@ function BitcoinWallets() {
       </div>
 
       {/* Address Rows */}
-      <div className="space-y-2">
+      {!collapsed && <div className="space-y-2">
         {wallets.map((w, i) => (
           <div
             key={i}
@@ -309,8 +323,10 @@ function BitcoinWallets() {
         ))}
       </div>
 
+      }
+
       {/* Total row */}
-      {anyLoaded && (
+      {!collapsed && anyLoaded && (
         <div className="mt-4 pt-4 border-t border-orange-500/15 flex justify-between items-center">
           <div>
             <div className="text-white/60 text-sm">Total Cold Storage</div>
@@ -559,6 +575,11 @@ export default function Finances() {
     setDataVersion(v => v + 1)
   }, [])
 
+  const handleBtcLoaded = useCallback((usd: number) => {
+    setBtcColdStorageUsd(usd)
+    setDataVersion(v => v + 1)
+  }, [])
+
   const accounts = useMemo(() => getAccounts(), [dataVersion, coinbaseLoaded])
   const portfolio = useMemo(() => getPortfolio(), [dataVersion, coinbaseLoaded])
   const dataSources = useMemo(() => getDataSources(), [dataVersion, coinbaseLoaded])
@@ -568,7 +589,7 @@ export default function Finances() {
 
   const sectionIcons: Record<string, string> = {
     'Fidelity': '🏦', 'Robinhood': '🪶', 'E*Trade': '📈',
-    'Ledger': '🔐', 'Phantom': '👻', 'MetaMask': '🦊', 'Coinbase': '🪙',
+    'Coinbase': '🪙',
     'Fold': '⚡', 'Strike': '⚡', 'Masterworks': '🎨', 'Fellow Products': '☕', 'Real Estate': '🏠',
   }
 
@@ -606,7 +627,7 @@ export default function Finances() {
       </div>
 
       {/* Bitcoin Cold Storage */}
-      <BitcoinWallets />
+      <BitcoinWallets onTotalLoaded={handleBtcLoaded} />
 
       {/* Brokerage Accounts — live via SnapTrade */}
       <BrokerageAccounts onDataLoaded={handleSnaptradeLoaded} />
