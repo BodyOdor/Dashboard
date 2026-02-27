@@ -129,13 +129,6 @@ const mockAccounts: Account[] = [
   { id: 'fid-401k', name: '401(k)', institution: 'Fidelity', type: '401k', value: 185000, dailyChange: 0.42, allocation: 0, lastUpdated: '2026-02-18' },
   { id: 'fid-brokerage', name: 'Individual Brokerage', institution: 'Fidelity', type: 'brokerage', value: 72000, dailyChange: -0.18, allocation: 0, lastUpdated: '2026-02-18' },
   { id: 'fid-roth', name: 'Roth IRA', institution: 'Fidelity', type: 'ira', value: 43000, dailyChange: 0.31, allocation: 0, lastUpdated: '2026-02-18' },
-  // Robinhood
-  { id: 'rh-brokerage', name: 'Brokerage', institution: 'Robinhood', type: 'brokerage', value: 28500, dailyChange: 1.23, allocation: 0, lastUpdated: '2026-02-18' },
-  // E*Trade
-  { id: 'et-brokerage', name: 'Brokerage', institution: 'E*Trade', type: 'brokerage', value: 51000, dailyChange: -0.07, allocation: 0, lastUpdated: '2026-02-18' },
-
-  // Fold
-  { id: 'fold', name: 'Bitcoin Rewards', institution: 'Fold', type: 'crypto_exchange', value: 3200, dailyChange: 2.15, allocation: 0, chain: 'BTC', lastUpdated: '2026-02-18' },
   // Strike — now pulled live via API
   // Masterworks
   { id: 'masterworks', name: 'Art Portfolio', institution: 'Masterworks', type: 'alternative', value: 37000, dailyChange: 0.0, allocation: 0, lastUpdated: '2026-02-18' },
@@ -215,7 +208,6 @@ export function getDataSources(): DataSource[] {
     { id: 'snaptrade', name: 'SnapTrade (Robinhood + E*Trade)', status: snaptradeAccounts ? 'connected' : 'not_configured', lastSync: snaptradeLastSync, accountCount: snaptradeAccounts?.length ?? 0 },
     { id: 'mempool', name: 'Mempool.space (BTC cold storage)', status: 'connected', lastSync: new Date().toISOString(), accountCount: 0 },
     { id: 'coinbase', name: 'Coinbase', status: coinbaseData ? 'connected' : 'not_configured', lastSync: coinbaseData?.fetched_at || null, accountCount: coinbaseData?.account_count || 0 },
-    { id: 'fold', name: 'Fold', status: 'not_configured', lastSync: null, accountCount: 1 },
     { id: 'strike', name: 'Strike', status: strikeData ? 'connected' : 'not_configured', lastSync: strikeData?.fetched_at || null, accountCount: strikeData?.account_count || 0 },
     { id: 'masterworks', name: 'Masterworks', status: 'manual', lastSync: '2026-02-10T08:00:00Z', accountCount: 1 },
     { id: 'fellow', name: 'Fellow Products', status: 'manual', lastSync: '2026-01-15T12:00:00Z', accountCount: 1 },
