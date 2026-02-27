@@ -27,6 +27,7 @@ let snaptradeLastSync: string | null = null
 let btcColdStorageUsd: number = 0
 let solColdStorageUsd: number = 0
 let fidelityTotalUsd: number = 0
+let metalsTotalUsd: number = 0
 
 export function setBtcColdStorageUsd(usd: number): void {
   btcColdStorageUsd = usd
@@ -50,6 +51,14 @@ export function setSolColdStorageUsd(usd: number): void {
 
 export function getSolColdStorageUsd(): number {
   return solColdStorageUsd
+}
+
+export function setMetalsTotal(usd: number): void {
+  metalsTotalUsd = usd
+}
+
+export function getMetalsTotal(): number {
+  return metalsTotalUsd
 }
 
 export function setSnaptradeAccounts(accounts: BrokerageAccount[]): void {
@@ -187,7 +196,7 @@ export function getNetWorth(): number {
 
 export function getPortfolio(): PortfolioSummary {
   const accounts = getAllAccounts()
-  const total = accounts.reduce((s, a) => s + a.value, 0) + btcColdStorageUsd + solColdStorageUsd + fidelityTotalUsd
+  const total = accounts.reduce((s, a) => s + a.value, 0) + btcColdStorageUsd + solColdStorageUsd + fidelityTotalUsd + metalsTotalUsd
   const traditional = accounts
     .filter(a => ['brokerage', '401k', 'ira'].includes(a.type))
     .reduce((s, a) => s + a.value, 0) + fidelityTotalUsd
@@ -196,7 +205,7 @@ export function getPortfolio(): PortfolioSummary {
     .reduce((s, a) => s + a.value, 0) + btcColdStorageUsd + solColdStorageUsd
   const alternative = accounts
     .filter(a => a.type === 'alternative')
-    .reduce((s, a) => s + a.value, 0)
+    .reduce((s, a) => s + a.value, 0) + metalsTotalUsd
   const realEstate = accounts
     .filter(a => a.type === 'real_estate')
     .reduce((s, a) => s + a.value, 0)

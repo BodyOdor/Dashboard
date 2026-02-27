@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts, setBtcColdStorageUsd, setSolColdStorageUsd, setFidelityTotal } from '../data/financial-store'
+import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts, setBtcColdStorageUsd, setSolColdStorageUsd, setFidelityTotal, setMetalsTotal } from '../data/financial-store'
 import type { Account, DataSource } from '../types/finance'
 import btcAddressConfig from '../data/btc-addresses.json'
 import solAddressConfig from '../data/sol-addresses.json'
@@ -7,6 +7,7 @@ import { loadBrokerageAccounts } from '../services/SnapTradeService'
 import type { BrokerageAccount, BrokeragePosition } from '../services/SnapTradeService'
 import { loadFidelityAccounts } from '../services/FidelityService'
 import type { FidelityAccount, FidelityPosition } from '../services/FidelityService'
+import metalsHoldings from '../data/metals-holdings.json'
 
 const fmt = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 const fmtPct = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%'
@@ -632,6 +633,129 @@ function BrokerageAccountCard({ acct }: { acct: BrokerageAccount }) {
   )
 }
 
+// ─── Precious Metals ─────────────────────────────────────────────────────────
+
+interface MetalSpot {
+  gold?: number
+  silver?: number
+  [key: string]: number | undefined
+}
+
+function PreciousMetals({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => void }) {
+  const [collapsed, setCollapsed] = useState(true)
+  const [spots, setSpots] = useState<Record<string, number>>({})
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const spotsRef = useRef<Record<string, number>>({})
+
+  const fetchSpots = useCallback(async () => {
+    try {
+      const res = await fetch('https://api.metals.live/v1/spot')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data: MetalSpot[] = await res.json()
+      const merged: Record<string, number> = {}
+      for (const entry of data) {
+        for (const [k, v] of Object.entries(entry)) {
+          if (typeof v === 'number') merged[k] = v
+        }
+      }
+      spotsRef.current = merged
+      setSpots(merged)
+      setLastUpdated(new Date())
+      setError(null)
+    } catch {
+      // keep last known prices
+      if (Object.keys(spotsRef.current).length === 0) {
+        setError('Unable to fetch spot prices')
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchSpots()
+    const interval = setInterval(fetchSpots, 300_000) // 5 min
+    return () => clearInterval(interval)
+  }, [fetchSpots])
+
+  const holdings = metalsHoldings.map(h => {
+    const spot = spots[h.metal] ?? null
+    const total = spot !== null ? h.ounces * spot : null
+    return { ...h, spot, total }
+  })
+
+  const totalUsd = holdings.reduce((s, h) => s + (h.total ?? 0), 0)
+  const anyLoaded = holdings.some(h => h.spot !== null)
+
+  useEffect(() => {
+    if (anyLoaded && onTotalLoaded) onTotalLoaded(totalUsd)
+  }, [totalUsd, anyLoaded, onTotalLoaded])
+
+  return (
+    <div className="bg-yellow-500/5 backdrop-blur-xl rounded-2xl border border-yellow-500/20 p-5 mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+        >
+          <span className="text-white/30 text-sm">{collapsed ? '▸' : '▾'}</span>
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            🥇 Precious Metals
+          </h2>
+          {anyLoaded && (
+            <span className="text-white/60 text-sm font-normal">
+              {fmt(totalUsd)}
+            </span>
+          )}
+          <span className="text-xs bg-yellow-500/15 text-yellow-300/80 px-2 py-0.5 rounded-full border border-yellow-500/20">
+            Live · Metals.live
+          </span>
+        </button>
+        <button
+          onClick={fetchSpots}
+          className="text-white/30 hover:text-white/70 text-sm transition-colors px-2 py-1 rounded-lg hover:bg-white/5"
+          title="Refresh spot prices"
+        >
+          ↻
+        </button>
+      </div>
+
+      {error && !anyLoaded && (
+        <p className="text-red-400/80 text-sm">{error}</p>
+      )}
+
+      {!collapsed && anyLoaded && (
+        <div className="space-y-2">
+          {holdings.map((h, i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between py-2 px-3 rounded-lg bg-yellow-500/5 border border-yellow-500/10"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-white/90">{h.label}</span>
+                <span className="text-xs text-white/40 font-mono">{h.ounces.toLocaleString()} oz</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <span className="text-xs text-yellow-300/60 font-mono">
+                  ${h.spot?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/oz
+                </span>
+                <span className="text-sm font-medium text-white/90">
+                  {h.total !== null ? fmt(h.total) : '—'}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!collapsed && anyLoaded && lastUpdated && (
+        <p className="text-white/20 text-xs mt-3 text-right">
+          Updated {lastUpdated.toLocaleTimeString()}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function BrokerageAccounts({ onDataLoaded }: { onDataLoaded: () => void }) {
   const [accounts, setAccounts] = useState<BrokerageAccount[]>([])
   const [loading, setLoading] = useState(true)
@@ -918,6 +1042,11 @@ export default function Finances() {
     setDataVersion(v => v + 1)
   }, [])
 
+  const handleMetalsLoaded = useCallback((usd: number) => {
+    setMetalsTotal(usd)
+    setDataVersion(v => v + 1)
+  }, [])
+
   const accounts = useMemo(() => getAccounts(), [dataVersion, coinbaseLoaded])
   const portfolio = useMemo(() => getPortfolio(), [dataVersion, coinbaseLoaded])
   const dataSources = useMemo(() => getDataSources(), [dataVersion, coinbaseLoaded])
@@ -969,6 +1098,9 @@ export default function Finances() {
 
       {/* Solana Cold Storage */}
       <SolanaWallets onTotalLoaded={handleSolLoaded} />
+
+      {/* Precious Metals */}
+      <PreciousMetals onTotalLoaded={handleMetalsLoaded} />
 
       {/* Brokerage Accounts — live via SnapTrade */}
       <BrokerageAccounts onDataLoaded={handleSnaptradeLoaded} />
