@@ -722,6 +722,127 @@ async fn fetch_snaptrade_accounts(
         .map_err(|e| format!("JSON serialization error: {}", e))
 }
 
+// ─── Fidelity CSV Import ──────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct FidelityPosition {
+    symbol: String,
+    description: String,
+    quantity: f64,
+    #[serde(rename = "lastPrice")]
+    last_price: f64,
+    #[serde(rename = "currentValue")]
+    current_value: f64,
+    #[serde(rename = "totalGainLoss")]
+    total_gain_loss: f64,
+    #[serde(rename = "avgCostBasis")]
+    avg_cost_basis: f64,
+    #[serde(rename = "isCash")]
+    is_cash: bool,
+}
+
+#[derive(Serialize)]
+struct FidelityAccountRaw {
+    #[serde(rename = "accountName")]
+    account_name: String,
+    #[serde(rename = "accountNumber")]
+    account_number: String,
+    positions: Vec<FidelityPosition>,
+}
+
+fn parse_money(s: &str) -> f64 {
+    let cleaned: String = s.chars().filter(|c| *c != '$' && *c != ',' && *c != '+').collect();
+    cleaned.trim().parse::<f64>().unwrap_or(0.0)
+}
+
+#[tauri::command]
+fn read_fidelity_csv() -> Result<String, String> {
+    // Look for CSV files in known path
+    let home = std::env::var("HOME").unwrap_or_default();
+    let data_dir = PathBuf::from(&home).join("projects/dashboard-app/src/data");
+
+    let mut csv_path: Option<PathBuf> = None;
+    if let Ok(entries) = fs::read_dir(&data_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("Portfolio_Positions_") && name.ends_with(".csv") {
+                // Pick the latest one alphabetically
+                if csv_path.as_ref().map_or(true, |p| entry.path() > *p) {
+                    csv_path = Some(entry.path());
+                }
+            }
+        }
+    }
+
+    let csv_path = csv_path.ok_or("No Portfolio_Positions_*.csv found in src/data/")?;
+    let content = fs::read_to_string(&csv_path)
+        .map_err(|e| format!("Failed to read CSV: {}", e))?;
+
+    // Remove BOM if present
+    let content = content.trim_start_matches('\u{feff}');
+
+    let mut accounts: Vec<(String, FidelityAccountRaw)> = Vec::new();
+
+    for (i, line) in content.lines().enumerate() {
+        if i == 0 { continue; } // skip header
+        let line = line.trim();
+        if line.is_empty() { continue; }
+
+        // Skip footer disclaimer lines — they start with " or don't have enough commas
+        if line.starts_with('"') || line.starts_with("The data") || line.starts_with("Brokerage") || line.starts_with("Date downloaded") {
+            continue;
+        }
+
+        // Parse CSV (simple split — no quoted commas in this data except description which won't have commas)
+        let cols: Vec<&str> = line.split(',').collect();
+        if cols.len() < 16 { continue; }
+
+        let account_number = cols[0].trim().to_string();
+        let account_name = cols[1].trim().to_string();
+        let symbol = cols[2].trim().to_string();
+        let description = cols[3].trim().to_string();
+
+        // Skip if account_number looks invalid
+        if account_number.is_empty() || account_name.is_empty() {
+            continue;
+        }
+
+        let quantity = parse_money(cols[4]);
+        let last_price = parse_money(cols[5]);
+        let current_value = parse_money(cols[7]);
+        let total_gain_loss = parse_money(cols[10]);
+        let avg_cost_basis = parse_money(cols[14]);
+
+        let is_cash = symbol.contains("SPAXX") || symbol.contains("FDRXX") ||
+            description.to_uppercase().contains("MONEY MARKET");
+
+        let pos = FidelityPosition {
+            symbol,
+            description,
+            quantity,
+            last_price,
+            current_value,
+            total_gain_loss,
+            avg_cost_basis,
+            is_cash,
+        };
+
+        let key = format!("{}-{}", account_number, account_name);
+        if let Some(entry) = accounts.iter_mut().find(|(k, _)| k == &key) {
+            entry.1.positions.push(pos);
+        } else {
+            accounts.push((key, FidelityAccountRaw {
+                account_name: account_name.clone(),
+                account_number: account_number.clone(),
+                positions: vec![pos],
+            }));
+        }
+    }
+
+    let result: Vec<&FidelityAccountRaw> = accounts.iter().map(|(_, v)| v).collect();
+    serde_json::to_string(&result).map_err(|e| format!("JSON error: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -735,7 +856,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_system_stats, get_projects, toggle_task, get_gateway_config, toggle_input_mute, start_voice_input, stop_voice_input, speak_text, fetch_tickers, fetch_coinbase, read_coinbase_data, fetch_strike, read_strike_data, fetch_snaptrade_accounts])
+        .invoke_handler(tauri::generate_handler![get_system_stats, get_projects, toggle_task, get_gateway_config, toggle_input_mute, start_voice_input, stop_voice_input, speak_text, fetch_tickers, fetch_coinbase, read_coinbase_data, fetch_strike, read_strike_data, fetch_snaptrade_accounts, read_fidelity_csv])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

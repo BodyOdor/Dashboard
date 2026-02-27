@@ -19,6 +19,9 @@ src/data/sol-addresses.json
 # SnapTrade credentials — contains API keys and user secrets, DO NOT COMMIT
 src/data/snaptrade-config.json
 
+# Fidelity portfolio CSV exports — contains real portfolio data, DO NOT COMMIT
+src/data/Portfolio_Positions_*.csv
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts, setBtcColdStorageUsd, setSolColdStorageUsd } from '../data/financial-store'
+import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts, setBtcColdStorageUsd, setSolColdStorageUsd, setFidelityTotal } from '../data/financial-store'
 import type { Account, DataSource } from '../types/finance'
 import btcAddressConfig from '../data/btc-addresses.json'
 import solAddressConfig from '../data/sol-addresses.json'
 import { loadBrokerageAccounts } from '../services/SnapTradeService'
 import type { BrokerageAccount, BrokeragePosition } from '../services/SnapTradeService'
+import { loadFidelityAccounts } from '../services/FidelityService'
+import type { FidelityAccount, FidelityPosition } from '../services/FidelityService'
 
 const fmt = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 const fmtPct = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%'
@@ -719,6 +721,163 @@ function BrokerageAccounts({ onDataLoaded }: { onDataLoaded: () => void }) {
   )
 }
 
+// ─── Fidelity Accounts (CSV Import) ───────────────────────────────────────────
+
+function FidelityPositionRow({ pos }: { pos: FidelityPosition }) {
+  const glColor = pos.totalGainLoss >= 0 ? 'text-green-400' : 'text-red-400'
+  const isOption = pos.symbol.startsWith('-') || pos.symbol.startsWith(' -')
+  return (
+    <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-4 gap-y-0.5 py-2 px-3 rounded-lg hover:bg-white/5 transition-colors text-sm">
+      <div>
+        <span className={`text-white font-semibold font-mono ${isOption ? 'text-purple-300' : ''}`}>{pos.symbol.trim()}</span>
+        {isOption && <span className="text-purple-400/60 text-xs ml-2">Option</span>}
+        {pos.description && (
+          <span className="text-white/40 text-xs ml-2 truncate">{pos.description}</span>
+        )}
+      </div>
+      <div className="text-white/60 text-right">{pos.quantity > 0 ? fmtShares(pos.quantity) + ' sh' : '—'}</div>
+      <div className="text-white/70 text-right">{pos.lastPrice > 0 ? fmtDollar(pos.lastPrice) : '—'}</div>
+      <div className="text-white font-medium text-right">{fmtDollar(pos.currentValue)}</div>
+      <div className={`${glColor} text-right font-mono`}>
+        {pos.totalGainLoss !== 0 ? (
+          <>
+            {pos.totalGainLoss >= 0 ? '+' : '−'}{fmtDollar(pos.totalGainLoss)}
+          </>
+        ) : '—'}
+      </div>
+    </div>
+  )
+}
+
+function FidelityAccountCard({ acct }: { acct: FidelityAccount }) {
+  const [expanded, setExpanded] = useState(true)
+  const displayPositions = acct.positions.filter(p => !p.isCash)
+  const totalGainLoss = displayPositions.reduce((s, p) => s + p.totalGainLoss, 0)
+
+  return (
+    <div className="bg-white/5 backdrop-blur-xl rounded-xl border border-white/10 overflow-hidden">
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/5 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-white font-semibold">{acct.accountName}</span>
+          <span className="text-white/25 text-xs font-mono">···{acct.accountNumber.slice(-4)}</span>
+        </div>
+        <div className="flex items-center gap-6">
+          <div className="text-right">
+            <div className="text-white font-bold text-lg">{fmt(acct.totalValue)}</div>
+            <div className="text-white/40 text-xs">Cash: {fmtDollar(acct.cashBalance)}</div>
+          </div>
+          {totalGainLoss !== 0 && (
+            <div className={`text-sm font-mono ${totalGainLoss >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {totalGainLoss >= 0 ? '+' : '−'}{fmtDollar(totalGainLoss)}
+            </div>
+          )}
+          <span className="text-white/30 text-sm">{expanded ? '▾' : '▸'}</span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-white/5">
+          {displayPositions.length > 0 ? (
+            <>
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-4 px-3 py-1.5 text-xs text-white/30 font-medium">
+                <div>Symbol / Name</div>
+                <div className="text-right">Shares</div>
+                <div className="text-right">Price</div>
+                <div className="text-right">Value</div>
+                <div className="text-right">Total G/L</div>
+              </div>
+              <div className="px-2 pb-3 space-y-0.5">
+                {displayPositions.map((pos, i) => (
+                  <FidelityPositionRow key={`${pos.symbol}-${i}`} pos={pos} />
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="px-5 py-3 text-white/30 text-sm italic">No positions held</div>
+          )}
+          {acct.cashBalance > 0.01 && (
+            <div className="border-t border-white/5 grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-4 px-3 py-2 text-sm text-white/40">
+              <div className="col-span-3">Cash / Money Market</div>
+              <div className="text-right text-white/60">{fmtDollar(acct.cashBalance)}</div>
+              <div />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FidelityAccounts({ onDataLoaded }: { onDataLoaded: () => void }) {
+  const [accounts, setAccounts] = useState<FidelityAccount[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await loadFidelityAccounts()
+      setAccounts(data)
+      const total = data.reduce((s, a) => s + a.totalValue, 0)
+      setFidelityTotal(total)
+      onDataLoaded()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load Fidelity CSV')
+    } finally {
+      setLoading(false)
+    }
+  }, [onDataLoaded])
+
+  useEffect(() => { load() }, [load])
+
+  const totalValue = accounts.reduce((s, a) => s + a.totalValue, 0)
+
+  return (
+    <div className="mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+          🏦 Fidelity Accounts
+          {totalValue > 0 && (
+            <span className="text-white/40 text-sm font-normal">{fmt(totalValue)}</span>
+          )}
+          <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-normal">CSV · Feb 26</span>
+        </h2>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="text-white/30 hover:text-white/70 text-sm transition-colors px-2 py-1 rounded-lg hover:bg-white/5 disabled:opacity-40"
+          title="Reload Fidelity CSV"
+        >
+          {loading ? '⟳' : '↻'}
+        </button>
+      </div>
+
+      {loading && accounts.length === 0 && (
+        <div className="bg-white/5 backdrop-blur-xl rounded-xl border border-white/10 p-5 animate-pulse">
+          <div className="h-4 bg-white/10 rounded w-48 mb-3" />
+          <div className="h-6 bg-white/10 rounded w-32" />
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-400 text-sm">
+          ⚠ {error}
+        </div>
+      )}
+
+      <div className="space-y-4">
+        {accounts.map(acct => (
+          <FidelityAccountCard key={acct.accountNumber} acct={acct} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function Finances() {
@@ -741,8 +900,11 @@ export default function Finances() {
     setRefreshing(false)
   }, [])
 
-  // Called when SnapTrade data loads so DataSources panel reflects connected status
   const handleSnaptradeLoaded = useCallback(() => {
+    setDataVersion(v => v + 1)
+  }, [])
+
+  const handleFidelityLoaded = useCallback(() => {
     setDataVersion(v => v + 1)
   }, [])
 
@@ -810,6 +972,9 @@ export default function Finances() {
 
       {/* Brokerage Accounts — live via SnapTrade */}
       <BrokerageAccounts onDataLoaded={handleSnaptradeLoaded} />
+
+      {/* Fidelity Accounts — CSV import */}
+      <FidelityAccounts onDataLoaded={handleFidelityLoaded} />
 
       {/* Account Sections */}
       <div className="space-y-6 mb-8">

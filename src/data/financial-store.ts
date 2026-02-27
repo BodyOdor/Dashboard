@@ -26,6 +26,7 @@ let snaptradeAccounts: BrokerageAccount[] | null = null
 let snaptradeLastSync: string | null = null
 let btcColdStorageUsd: number = 0
 let solColdStorageUsd: number = 0
+let fidelityTotalUsd: number = 0
 
 export function setBtcColdStorageUsd(usd: number): void {
   btcColdStorageUsd = usd
@@ -33,6 +34,14 @@ export function setBtcColdStorageUsd(usd: number): void {
 
 export function getBtcColdStorageUsd(): number {
   return btcColdStorageUsd
+}
+
+export function setFidelityTotal(usd: number): void {
+  fidelityTotalUsd = usd
+}
+
+export function getFidelityTotal(): number {
+  return fidelityTotalUsd
 }
 
 export function setSolColdStorageUsd(usd: number): void {
@@ -134,10 +143,7 @@ function getCoinbaseAccounts(): Account[] {
 // Mock data — will be replaced with Tauri fs read/write later
 
 const mockAccounts: Account[] = [
-  // Fidelity
-  { id: 'fid-401k', name: '401(k)', institution: 'Fidelity', type: '401k', value: 185000, dailyChange: 0.42, allocation: 0, lastUpdated: '2026-02-18' },
-  { id: 'fid-brokerage', name: 'Individual Brokerage', institution: 'Fidelity', type: 'brokerage', value: 72000, dailyChange: -0.18, allocation: 0, lastUpdated: '2026-02-18' },
-  { id: 'fid-roth', name: 'Roth IRA', institution: 'Fidelity', type: 'ira', value: 43000, dailyChange: 0.31, allocation: 0, lastUpdated: '2026-02-18' },
+  // Fidelity — now pulled from CSV via read_fidelity_csv command
   // Strike — now pulled live via API
   // Masterworks
   { id: 'masterworks', name: 'Art Portfolio', institution: 'Masterworks', type: 'alternative', value: 37000, dailyChange: 0.0, allocation: 0, lastUpdated: '2026-02-18' },
@@ -181,10 +187,10 @@ export function getNetWorth(): number {
 
 export function getPortfolio(): PortfolioSummary {
   const accounts = getAllAccounts()
-  const total = accounts.reduce((s, a) => s + a.value, 0) + btcColdStorageUsd + solColdStorageUsd
+  const total = accounts.reduce((s, a) => s + a.value, 0) + btcColdStorageUsd + solColdStorageUsd + fidelityTotalUsd
   const traditional = accounts
     .filter(a => ['brokerage', '401k', 'ira'].includes(a.type))
-    .reduce((s, a) => s + a.value, 0)
+    .reduce((s, a) => s + a.value, 0) + fidelityTotalUsd
   const crypto = accounts
     .filter(a => ['crypto_wallet', 'crypto_exchange', 'bitcoin_cold_storage'].includes(a.type))
     .reduce((s, a) => s + a.value, 0) + btcColdStorageUsd + solColdStorageUsd
