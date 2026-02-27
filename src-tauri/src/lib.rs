@@ -598,14 +598,18 @@ async fn fetch_snaptrade_accounts(
         .as_secs()
         .to_string();
 
-    // Query string — only userId + userSecret in the URL, per SnapTrade spec
-    let query_string = format!("userId={}&userSecret={}", user_id, user_secret);
+    // Query string — all 4 params in URL, per SnapTrade SDK
+    let query_string = format!(
+        "clientId={}&timestamp={}&userId={}&userSecret={}",
+        client_id, timestamp, user_id, user_secret
+    );
 
     // Sign a request: HMAC-SHA256(key=consumerKey, data=JSON sig_object) → base64 STANDARD
     // sig_object keys must be alphabetically ordered: content, path, query
+    // content must be null (not {}) for GET requests with no body
     let make_sig = |path: &str| -> Result<String, String> {
         let sig_content = format!(
-            r#"{{"content":{{}},"path":"{}","query":"{}"}}"#,
+            r#"{{"content":null,"path":"{}","query":"{}"}}"#,
             path, query_string
         );
         let mut mac = Hmac::<Sha256>::new_from_slice(consumer_key.as_bytes())

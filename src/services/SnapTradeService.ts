@@ -79,12 +79,17 @@ interface RawEnriched {
 export async function loadBrokerageAccounts(): Promise<BrokerageAccount[]> {
   const { clientId, consumerKey, userId, userSecret } = snapConfig
 
-  const jsonStr = await invoke<string>('fetch_snaptrade_accounts', {
-    clientId,
-    consumerKey,
-    userId,
-    userSecret,
-  })
+  let jsonStr: string
+  try {
+    jsonStr = await invoke<string>('fetch_snaptrade_accounts', {
+      clientId,
+      consumerKey,
+      userId,
+      userSecret,
+    })
+  } catch (e) {
+    throw new Error(String(e))
+  }
 
   const enriched: RawEnriched[] = JSON.parse(jsonStr)
   if (!enriched || enriched.length === 0) return []
