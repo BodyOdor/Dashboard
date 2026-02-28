@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https://api.open-meteo.com https://api.snaptrade.com https://mempool.space ws://127.0.0.1:* ws://localhost:*; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src 'self' https://api.open-meteo.com https://api.snaptrade.com https://mempool.space https://mainnet.helius-rpc.com https://api.coingecko.com ws://127.0.0.1:* ws://localhost:*; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

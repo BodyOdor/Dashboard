@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { invoke } from '@tauri-apps/api/core'
-import { useGatewayChat } from './useGatewayChat'
+import { useGatewayChat, type ImageAttachment } from './useGatewayChat'
 
 interface Ticker {
   symbol: string
@@ -48,6 +48,8 @@ function App() {
   const [activeTab, setActiveTab] = useState<'business' | 'personal'>('business')
   const { messages: chatMessages, sendMessage: gatewaySend, isConnected, isLoading: chatLoading } = useGatewayChat()
   const [chatInput, setChatInput] = useState('')
+  const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [isListening, setIsListening] = useState(false)
   const [tickers, setTickers] = useState<Ticker[]>([])
   const chatContainerRef = useRef<HTMLDivElement>(null)
@@ -95,10 +97,36 @@ function App() {
   }
 
   const sendMessage = () => {
-    if (!chatInput.trim() || chatLoading) return
+    if ((!chatInput.trim() && pendingImages.length === 0) || chatLoading) return
     const text = chatInput.trim()
+    const images = pendingImages.length > 0 ? [...pendingImages] : undefined
     setChatInput('')
-    gatewaySend(text)
+    setPendingImages([])
+    gatewaySend(text, images)
+  }
+
+  const handleFileSelect = (files: FileList | null) => {
+    if (!files) return
+    Array.from(files).forEach(file => {
+      if (!file.type.startsWith('image/')) return
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = reader.result as string
+        const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
+        if (!match) return
+        setPendingImages(prev => [...prev, {
+          mimeType: match[1],
+          dataUrl,
+          base64: match[2],
+        }])
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    handleFileSelect(e.dataTransfer.files)
   }
 
   useEffect(() => {
@@ -354,7 +382,7 @@ function App() {
             <span>🛠️</span> Larry
             <span className={`inline-block w-2.5 h-2.5 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`} title={isConnected ? 'Connected' : 'Disconnected'} />
           </h2>
-          <div ref={chatContainerRef} className="bg-white/10 rounded-lg p-4 h-48 mb-3 overflow-y-auto text-lg text-white/90 flex flex-col gap-3 backdrop-blur-sm border border-white/10">
+          <div ref={chatContainerRef} onDragOver={(e) => e.preventDefault()} onDrop={handleDrop} className="bg-white/10 rounded-lg p-4 h-48 mb-3 overflow-y-auto text-lg text-white/90 flex flex-col gap-3 backdrop-blur-sm border border-white/10">
             {chatMessages.slice(-50).map((msg, i) => {
               // Error messages: red/muted inline indicator instead of normal assistant bubble
               if (msg.isError) {
@@ -369,11 +397,20 @@ function App() {
                   <span className={`text-sm font-medium ${msg.role === 'assistant' ? 'text-blue-400' : 'text-green-400'}`}>
                     {msg.role === 'assistant' ? 'Larry' : 'You'}
                   </span>
+                  {msg.images && msg.images.length > 0 && (
+                    <div className="mt-1 flex gap-2 flex-wrap">
+                      {msg.images.map((img, j) => (
+                        <img key={j} src={img.dataUrl} alt="attachment" className="max-w-[200px] max-h-[150px] rounded-md border border-white/20 object-contain" />
+                      ))}
+                    </div>
+                  )}
+                  {msg.text && (
                   <div className="mt-1 text-base leading-relaxed">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-300 underline hover:text-blue-400">{children}</a> }}>
                       {msg.text}
                     </ReactMarkdown>
                   </div>
+                  )}
                 </div>
               )
             })}
@@ -381,7 +418,36 @@ function App() {
               <div className="self-start p-2 rounded-lg bg-gray-800/30 text-white/40 italic text-sm">Larry is thinking...</div>
             )}
           </div>
+          {pendingImages.length > 0 && (
+            <div className="flex gap-2 mb-2 flex-wrap">
+              {pendingImages.map((img, i) => (
+                <div key={i} className="relative group">
+                  <img src={img.dataUrl} alt="pending" className="w-16 h-16 rounded-md object-cover border border-white/20" />
+                  <button
+                    onClick={() => setPendingImages(prev => prev.filter((_, j) => j !== i))}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 rounded-full text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="flex gap-2">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => { handleFileSelect(e.target.files); e.target.value = '' }}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={chatLoading}
+              className="px-3 py-2 bg-white/15 text-white/70 rounded-lg hover:bg-white/25 hover:text-white/90 transition-colors disabled:opacity-50"
+              title="Attach image"
+            >
+              📎
+            </button>
             <input 
               type="text" 
               placeholder="Ask Larry something..."

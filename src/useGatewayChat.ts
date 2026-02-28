@@ -6,11 +6,21 @@ import {
   signDevicePayload,
 } from './deviceIdentity'
 
+export interface ImageAttachment {
+  mimeType: string
+  /** Full data URL (data:image/png;base64,...) for display */
+  dataUrl: string
+  /** Raw base64 content (no prefix) for sending */
+  base64: string
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   /** If true, this message represents a send/network/scope error and should be shown with error styling */
   isError?: boolean
+  /** Attached images (user-sent) */
+  images?: ImageAttachment[]
 }
 
 interface GatewayConfig {
@@ -257,16 +267,24 @@ export function useGatewayChat() {
   }, [])
 
   const sendMessage = useCallback(
-    async (text: string) => {
-      if (!text.trim()) return
-      setMessages(prev => [...prev, { role: 'user', text }])
+    async (text: string, images?: ImageAttachment[]) => {
+      if (!text.trim() && (!images || images.length === 0)) return
+      setMessages(prev => [...prev, { role: 'user', text, images }])
       setIsLoading(true)
       try {
+        // Build attachments for gateway (matches control UI format)
+        const attachments = images?.map(img => ({
+          type: 'image' as const,
+          mimeType: img.mimeType,
+          content: img.base64,
+        }))
+
         const result = await sendReq('chat.send', {
           sessionKey: sessionKeyRef.current,
           message: text,
-          deliver: false,      // Suppress delivery to external channels; response comes via chat events
+          deliver: false,
           idempotencyKey: crypto.randomUUID(),
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
         })
         // If gateway returned ok:false without throwing (shouldn't happen with new sendReq, defensive check)
         if (result && result.ok === false) {

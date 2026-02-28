@@ -532,6 +532,46 @@ sf.write('{out}', audio.samples, audio.sample_rate)
 }
 
 #[tauri::command]
+async fn fetch_metals_spots() -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let mut result = serde_json::Map::new();
+
+    // Gold futures (GC=F)
+    if let Ok(resp) = client
+        .get("https://query2.finance.yahoo.com/v8/finance/chart/GC%3DF?interval=1d&range=1d")
+        .header("User-Agent", "Mozilla/5.0")
+        .send()
+        .await
+    {
+        if let Ok(data) = resp.json::<serde_json::Value>().await {
+            if let Some(price) = data["chart"]["result"][0]["meta"]["regularMarketPrice"].as_f64() {
+                result.insert("gold".to_string(), serde_json::json!(price));
+            }
+        }
+    }
+
+    // Silver futures (SI=F)
+    if let Ok(resp) = client
+        .get("https://query2.finance.yahoo.com/v8/finance/chart/SI%3DF?interval=1d&range=1d")
+        .header("User-Agent", "Mozilla/5.0")
+        .send()
+        .await
+    {
+        if let Ok(data) = resp.json::<serde_json::Value>().await {
+            if let Some(price) = data["chart"]["result"][0]["meta"]["regularMarketPrice"].as_f64() {
+                result.insert("silver".to_string(), serde_json::json!(price));
+            }
+        }
+    }
+
+    if result.is_empty() {
+        return Err("Failed to fetch any metal prices".to_string());
+    }
+
+    serde_json::to_string(&result).map_err(|e| format!("JSON error: {}", e))
+}
+
+#[tauri::command]
 async fn fetch_coinbase() -> Result<String, String> {
     let output = Command::new("python3")
         .arg("/Users/jadmin/.config/finance-dashboard/fetch-coinbase.py")
@@ -856,7 +896,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_system_stats, get_projects, toggle_task, get_gateway_config, toggle_input_mute, start_voice_input, stop_voice_input, speak_text, fetch_tickers, fetch_coinbase, read_coinbase_data, fetch_strike, read_strike_data, fetch_snaptrade_accounts, read_fidelity_csv])
+        .invoke_handler(tauri::generate_handler![get_system_stats, get_projects, toggle_task, get_gateway_config, toggle_input_mute, start_voice_input, stop_voice_input, speak_text, fetch_tickers, fetch_coinbase, read_coinbase_data, fetch_strike, read_strike_data, fetch_snaptrade_accounts, read_fidelity_csv, fetch_metals_spots])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

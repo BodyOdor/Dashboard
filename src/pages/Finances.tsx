@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { getAccounts, getPortfolio, getDataSources, loadCoinbaseData, refreshCoinbaseData, loadStrikeData, refreshStrikeData, setSnaptradeAccounts, setBtcColdStorageUsd, setSolColdStorageUsd, setFidelityTotal, setMetalsTotal } from '../data/financial-store'
 import type { Account, DataSource } from '../types/finance'
 import btcAddressConfig from '../data/btc-addresses.json'
@@ -266,9 +267,8 @@ function BitcoinWallets({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => vo
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={() => setCollapsed(c => !c)}
-          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+          className="flex items-center gap-3 flex-1 hover:opacity-80 transition-opacity"
         >
-          <span className="text-white/30 text-sm">{collapsed ? '▸' : '▾'}</span>
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             🔐 Bitcoin Cold Storage
           </h2>
@@ -282,6 +282,7 @@ function BitcoinWallets({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => vo
               1 BTC = ${btcPrice.toLocaleString('en-US')}
             </span>
           )}
+          <span className="text-white/30 text-2xl ml-auto">{collapsed ? '▸' : '▾'}</span>
         </button>
         <button
           onClick={fetchAll}
@@ -402,7 +403,7 @@ function SolanaWallets({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => voi
     const updated: SolWalletRow[] = await Promise.all(
       addresses.map(async (cfg) => {
         try {
-          const res = await fetch('https://api.mainnet-beta.solana.com', {
+          const res = await fetch('https://mainnet.helius-rpc.com/?api-key=4a98be85-8a41-4b91-8d28-80f498becf91', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -450,9 +451,8 @@ function SolanaWallets({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => voi
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={() => setCollapsed(c => !c)}
-          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+          className="flex items-center gap-3 flex-1 hover:opacity-80 transition-opacity"
         >
-          <span className="text-white/30 text-sm">{collapsed ? '▸' : '▾'}</span>
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             🔐 Solana Cold Storage
           </h2>
@@ -466,6 +466,7 @@ function SolanaWallets({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => voi
               1 SOL = ${solPrice.toLocaleString('en-US')}
             </span>
           )}
+          <span className="text-white/30 text-2xl ml-auto">{collapsed ? '▸' : '▾'}</span>
         </button>
         <button
           onClick={fetchAll}
@@ -593,7 +594,7 @@ function BrokerageAccountCard({ acct }: { acct: BrokerageAccount }) {
               {totalGainLoss >= 0 ? '+' : '−'}{fmtDollar(totalGainLoss)}
             </div>
           )}
-          <span className="text-white/30 text-sm">{expanded ? '▾' : '▸'}</span>
+          <span className="text-white/30 text-2xl">{expanded ? '▾' : '▸'}</span>
         </div>
       </button>
 
@@ -635,12 +636,6 @@ function BrokerageAccountCard({ acct }: { acct: BrokerageAccount }) {
 
 // ─── Precious Metals ─────────────────────────────────────────────────────────
 
-interface MetalSpot {
-  gold?: number
-  silver?: number
-  [key: string]: number | undefined
-}
-
 function PreciousMetals({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => void }) {
   const [collapsed, setCollapsed] = useState(true)
   const [spots, setSpots] = useState<Record<string, number>>({})
@@ -650,15 +645,8 @@ function PreciousMetals({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => vo
 
   const fetchSpots = useCallback(async () => {
     try {
-      const res = await fetch('https://api.metals.live/v1/spot')
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data: MetalSpot[] = await res.json()
-      const merged: Record<string, number> = {}
-      for (const entry of data) {
-        for (const [k, v] of Object.entries(entry)) {
-          if (typeof v === 'number') merged[k] = v
-        }
-      }
+      const raw = await invoke<string>('fetch_metals_spots')
+      const merged: Record<string, number> = JSON.parse(raw)
       spotsRef.current = merged
       setSpots(merged)
       setLastUpdated(new Date())
@@ -695,9 +683,8 @@ function PreciousMetals({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => vo
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={() => setCollapsed(c => !c)}
-          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+          className="flex items-center gap-3 flex-1 hover:opacity-80 transition-opacity"
         >
-          <span className="text-white/30 text-sm">{collapsed ? '▸' : '▾'}</span>
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             🥇 Precious Metals
           </h2>
@@ -707,8 +694,9 @@ function PreciousMetals({ onTotalLoaded }: { onTotalLoaded?: (usd: number) => vo
             </span>
           )}
           <span className="text-xs bg-yellow-500/15 text-yellow-300/80 px-2 py-0.5 rounded-full border border-yellow-500/20">
-            Live · Metals.live
+            Live · Yahoo Finance
           </span>
+          <span className="text-white/30 text-2xl ml-auto">{collapsed ? '▸' : '▾'}</span>
         </button>
         <button
           onClick={fetchSpots}
@@ -898,7 +886,7 @@ function FidelityAccountCard({ acct }: { acct: FidelityAccount }) {
               {totalGainLoss >= 0 ? '+' : '−'}{fmtDollar(totalGainLoss)}
             </div>
           )}
-          <span className="text-white/30 text-sm">{expanded ? '▾' : '▸'}</span>
+          <span className="text-white/30 text-2xl">{expanded ? '▾' : '▸'}</span>
         </div>
       </button>
 
