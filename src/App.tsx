@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
 import { useGatewayChat, type ImageAttachment } from './useGatewayChat'
 
 interface Ticker {
@@ -49,7 +51,6 @@ function App() {
   const { messages: chatMessages, sendMessage: gatewaySend, isConnected, isLoading: chatLoading } = useGatewayChat()
   const [chatInput, setChatInput] = useState('')
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([])
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [isListening, setIsListening] = useState(false)
   const [tickers, setTickers] = useState<Ticker[]>([])
   const chatContainerRef = useRef<HTMLDivElement>(null)
@@ -71,8 +72,10 @@ function App() {
         if (transcript) {
           setChatInput(transcript)
           setTimeout(() => {
+            const images = pendingImages.length > 0 ? [...pendingImages] : undefined
             setChatInput('')
-            gatewaySend(transcript)
+            setPendingImages([])
+            gatewaySend(transcript, images)
           }, 300)
         }
       } catch (err) {
@@ -105,29 +108,60 @@ function App() {
     gatewaySend(text, images)
   }
 
-  const handleFileSelect = (files: FileList | null) => {
-    if (!files) return
-    Array.from(files).forEach(file => {
-      if (!file.type.startsWith('image/')) return
-      const reader = new FileReader()
-      reader.onload = () => {
-        const dataUrl = reader.result as string
-        const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
-        if (!match) return
-        setPendingImages(prev => [...prev, {
-          mimeType: match[1],
-          dataUrl,
-          base64: match[2],
-        }])
+  const openAttachmentPicker = async () => {
+    try {
+      const selected = await openFileDialog({
+        multiple: true,
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+      })
+      if (!selected) return
+      const paths = Array.isArray(selected) ? selected : [selected]
+      for (const filePath of paths) {
+        try {
+          const mimeMap: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
+          const ext = (filePath as string).split('.').pop()?.toLowerCase() ?? ''
+          const mimeType = mimeMap[ext] ?? 'image/png'
+          const base64 = await invoke<string>('read_file_base64', { path: filePath })
+          const dataUrl = `data:${mimeType};base64,${base64}`
+          setPendingImages(prev => [...prev, { mimeType, dataUrl, base64 }])
+        } catch (err) {
+          console.error('Failed to read selected file:', err)
+        }
       }
-      reader.readAsDataURL(file)
-    })
+    } catch (err) {
+      console.error('File picker error:', err)
+    }
   }
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    handleFileSelect(e.dataTransfer.files)
-  }
+  // Tauri native file drop (replaces HTML5 drag-drop which doesn't work in WKWebView)
+  const lastDropRef = useRef<string>('')
+  useEffect(() => {
+    const win = getCurrentWindow()
+    let unlisten: (() => void) | null = null
+    win.onDragDropEvent(async (event) => {
+      if (event.payload.type === 'drop') {
+        const paths: string[] = (event.payload as any).paths ?? []
+        // Dedup: React StrictMode registers the listener twice in dev; skip if same drop as last
+        const dropKey = paths.join('|') + Date.now().toString().slice(0, -2)
+        if (lastDropRef.current === dropKey) return
+        lastDropRef.current = dropKey
+        for (const path of paths) {
+          const ext = path.split('.').pop()?.toLowerCase() ?? ''
+          const mimeMap: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
+          const mimeType = mimeMap[ext]
+          if (!mimeType) continue
+          try {
+            const base64 = await invoke<string>('read_file_base64', { path })
+            const dataUrl = `data:${mimeType};base64,${base64}`
+            setPendingImages(prev => [...prev, { mimeType, dataUrl, base64 }])
+          } catch (err) {
+            console.error('Failed to read dropped file:', err)
+          }
+        }
+      }
+    }).then(fn => { unlisten = fn })
+    return () => { unlisten?.() }
+  }, [])
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000)
@@ -382,7 +416,7 @@ function App() {
             <span>🛠️</span> Larry
             <span className={`inline-block w-2.5 h-2.5 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`} title={isConnected ? 'Connected' : 'Disconnected'} />
           </h2>
-          <div ref={chatContainerRef} onDragOver={(e) => e.preventDefault()} onDrop={handleDrop} className="bg-white/10 rounded-lg p-4 h-48 mb-3 overflow-y-auto text-lg text-white/90 flex flex-col gap-3 backdrop-blur-sm border border-white/10">
+          <div ref={chatContainerRef} className="bg-white/10 rounded-lg p-4 h-48 mb-3 overflow-y-auto text-lg text-white/90 flex flex-col gap-3 backdrop-blur-sm border border-white/10">
             {chatMessages.slice(-50).map((msg, i) => {
               // Error messages: red/muted inline indicator instead of normal assistant bubble
               if (msg.isError) {
@@ -432,16 +466,8 @@ function App() {
             </div>
           )}
           <div className="flex gap-2">
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => { handleFileSelect(e.target.files); e.target.value = '' }}
-            />
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={openAttachmentPicker}
               disabled={chatLoading}
               className="px-3 py-2 bg-white/15 text-white/70 rounded-lg hover:bg-white/25 hover:text-white/90 transition-colors disabled:opacity-50"
               title="Attach image"

@@ -796,6 +796,33 @@ fn parse_money(s: &str) -> f64 {
 }
 
 #[tauri::command]
+fn read_file_base64(path: String) -> Result<String, String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(&path)
+        .map_err(|e| format!("Failed to open file: {}", e))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    Ok(base64_encode(&bytes))
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    use std::fmt::Write;
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::new();
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
+        result.push(CHARS[(b0 >> 2)] as char);
+        result.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
+        result.push(if chunk.len() > 1 { CHARS[((b1 & 15) << 2) | (b2 >> 6)] as char } else { '=' });
+        result.push(if chunk.len() > 2 { CHARS[b2 & 63] as char } else { '=' });
+    }
+    result
+}
+
+#[tauri::command]
 fn read_fidelity_csv() -> Result<String, String> {
     // Look for CSV files in known path
     let home = std::env::var("HOME").unwrap_or_default();
@@ -886,6 +913,7 @@ fn read_fidelity_csv() -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -896,7 +924,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_system_stats, get_projects, toggle_task, get_gateway_config, toggle_input_mute, start_voice_input, stop_voice_input, speak_text, fetch_tickers, fetch_coinbase, read_coinbase_data, fetch_strike, read_strike_data, fetch_snaptrade_accounts, read_fidelity_csv, fetch_metals_spots])
+        .invoke_handler(tauri::generate_handler![get_system_stats, get_projects, toggle_task, get_gateway_config, toggle_input_mute, start_voice_input, stop_voice_input, speak_text, fetch_tickers, fetch_coinbase, read_coinbase_data, fetch_strike, read_strike_data, fetch_snaptrade_accounts, read_fidelity_csv, fetch_metals_spots, read_file_base64])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
