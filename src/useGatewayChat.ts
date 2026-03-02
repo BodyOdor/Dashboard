@@ -6,21 +6,28 @@ import {
   signDevicePayload,
 } from './deviceIdentity'
 
-export interface ImageAttachment {
+export interface FileAttachment {
   mimeType: string
-  /** Full data URL (data:image/png;base64,...) for display */
+  /** Full data URL (data:image/png;base64,...) for display — only set for images */
   dataUrl: string
   /** Raw base64 content (no prefix) for sending */
   base64: string
+  /** Original filename (e.g. "report.xlsx") */
+  name?: string
+  /** True for image types that can be previewed inline */
+  isImage?: boolean
 }
+
+/** @deprecated Use FileAttachment */
+export type ImageAttachment = FileAttachment
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   /** If true, this message represents a send/network/scope error and should be shown with error styling */
   isError?: boolean
-  /** Attached images (user-sent) */
-  images?: ImageAttachment[]
+  /** Attached files (user-sent) */
+  images?: FileAttachment[]
 }
 
 interface GatewayConfig {
@@ -267,17 +274,28 @@ export function useGatewayChat() {
   }, [])
 
   const sendMessage = useCallback(
-    async (text: string, images?: ImageAttachment[]) => {
-      if (!text.trim() && (!images || images.length === 0)) return
-      setMessages(prev => [...prev, { role: 'user', text, images }])
+    async (text: string, files?: FileAttachment[]) => {
+      if (!text.trim() && (!files || files.length === 0)) return
+      setMessages(prev => [...prev, { role: 'user', text, images: files }])
       setIsLoading(true)
       try {
-        // Build attachments for gateway (matches control UI format)
-        const attachments = images?.map(img => ({
-          type: 'image' as const,
-          mimeType: img.mimeType,
-          content: img.base64,
-        }))
+        // Build attachments for gateway
+        // Images use type: 'image'; all other files use type: 'file' with a name field
+        const attachments = files?.map(f => {
+          if (f.isImage) {
+            return {
+              type: 'image' as const,
+              mimeType: f.mimeType,
+              content: f.base64,
+            }
+          }
+          return {
+            type: 'file' as const,
+            mimeType: f.mimeType,
+            content: f.base64,
+            name: f.name ?? 'attachment',
+          }
+        })
 
         const result = await sendReq('chat.send', {
           sessionKey: sessionKeyRef.current,

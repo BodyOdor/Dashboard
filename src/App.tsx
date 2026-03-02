@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
-import { useGatewayChat, type ImageAttachment } from './useGatewayChat'
+import { useGatewayChat, type FileAttachment } from './useGatewayChat'
 
 interface Ticker {
   symbol: string
@@ -50,7 +50,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'business' | 'personal'>('business')
   const { messages: chatMessages, sendMessage: gatewaySend, isConnected, isLoading: chatLoading } = useGatewayChat()
   const [chatInput, setChatInput] = useState('')
-  const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([])
+  const [pendingImages, setPendingImages] = useState<FileAttachment[]>([])
   const [isListening, setIsListening] = useState(false)
   const [tickers, setTickers] = useState<Ticker[]>([])
   const chatContainerRef = useRef<HTMLDivElement>(null)
@@ -108,22 +108,50 @@ function App() {
     gatewaySend(text, images)
   }
 
+  // Shared MIME map for all supported attachment types
+  const MIME_MAP: Record<string, string> = {
+    // Images
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    // Spreadsheets
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    xls: 'application/vnd.ms-excel',
+    csv: 'text/csv',
+    // Documents
+    pdf: 'application/pdf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    doc: 'application/msword',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    // Presentations
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    // Data
+    json: 'application/json',
+    xml: 'application/xml',
+  }
+  const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
+
   const openAttachmentPicker = async () => {
     try {
       const selected = await openFileDialog({
         multiple: true,
-        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+        filters: [
+          { name: 'All Supported', extensions: Object.keys(MIME_MAP) },
+          { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+          { name: 'Spreadsheets', extensions: ['xlsx', 'xls', 'csv'] },
+          { name: 'Documents', extensions: ['pdf', 'docx', 'doc', 'txt', 'md'] },
+        ],
       })
       if (!selected) return
       const paths = Array.isArray(selected) ? selected : [selected]
       for (const filePath of paths) {
         try {
-          const mimeMap: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
           const ext = (filePath as string).split('.').pop()?.toLowerCase() ?? ''
-          const mimeType = mimeMap[ext] ?? 'image/png'
+          const mimeType = MIME_MAP[ext] ?? 'application/octet-stream'
+          const isImage = IMAGE_EXTS.has(ext)
+          const name = (filePath as string).split('/').pop() ?? 'attachment'
           const base64 = await invoke<string>('read_file_base64', { path: filePath })
-          const dataUrl = `data:${mimeType};base64,${base64}`
-          setPendingImages(prev => [...prev, { mimeType, dataUrl, base64 }])
+          const dataUrl = isImage ? `data:${mimeType};base64,${base64}` : ''
+          setPendingImages(prev => [...prev, { mimeType, dataUrl, base64, name, isImage }])
         } catch (err) {
           console.error('Failed to read selected file:', err)
         }
@@ -145,15 +173,26 @@ function App() {
         const dropKey = paths.join('|') + Date.now().toString().slice(0, -2)
         if (lastDropRef.current === dropKey) return
         lastDropRef.current = dropKey
-        for (const path of paths) {
+        const dropMimeMap: Record<string, string> = {
+            png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+            xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            xls: 'application/vnd.ms-excel', csv: 'text/csv', pdf: 'application/pdf',
+            docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            doc: 'application/msword', txt: 'text/plain', md: 'text/markdown',
+            pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            json: 'application/json', xml: 'application/xml',
+          }
+          const dropImageExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
+          for (const path of paths) {
           const ext = path.split('.').pop()?.toLowerCase() ?? ''
-          const mimeMap: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
-          const mimeType = mimeMap[ext]
-          if (!mimeType) continue
+          const mimeType = dropMimeMap[ext]
+          if (!mimeType) continue  // ignore unknown file types
+          const isImage = dropImageExts.has(ext)
+          const name = path.split('/').pop() ?? 'attachment'
           try {
             const base64 = await invoke<string>('read_file_base64', { path })
-            const dataUrl = `data:${mimeType};base64,${base64}`
-            setPendingImages(prev => [...prev, { mimeType, dataUrl, base64 }])
+            const dataUrl = isImage ? `data:${mimeType};base64,${base64}` : ''
+            setPendingImages(prev => [...prev, { mimeType, dataUrl, base64, name, isImage }])
           } catch (err) {
             console.error('Failed to read dropped file:', err)
           }
@@ -434,7 +473,12 @@ function App() {
                   {msg.images && msg.images.length > 0 && (
                     <div className="mt-1 flex gap-2 flex-wrap">
                       {msg.images.map((img, j) => (
-                        <img key={j} src={img.dataUrl} alt="attachment" className="max-w-[200px] max-h-[150px] rounded-md border border-white/20 object-contain" />
+                        img.isImage
+                          ? <img key={j} src={img.dataUrl} alt="attachment" className="max-w-[200px] max-h-[150px] rounded-md border border-white/20 object-contain" />
+                          : <div key={j} className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/10 border border-white/20 text-white/80 text-xs">
+                              <span>📎</span>
+                              <span className="max-w-[160px] truncate">{img.name ?? 'attachment'}</span>
+                            </div>
                       ))}
                     </div>
                   )}
@@ -456,7 +500,13 @@ function App() {
             <div className="flex gap-2 mb-2 flex-wrap">
               {pendingImages.map((img, i) => (
                 <div key={i} className="relative group">
-                  <img src={img.dataUrl} alt="pending" className="w-16 h-16 rounded-md object-cover border border-white/20" />
+                  {img.isImage
+                    ? <img src={img.dataUrl} alt="pending" className="w-16 h-16 rounded-md object-cover border border-white/20" />
+                    : <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-white/10 border border-white/20 text-white/80 text-xs max-w-[140px]">
+                        <span>📎</span>
+                        <span className="truncate">{img.name ?? 'file'}</span>
+                      </div>
+                  }
                   <button
                     onClick={() => setPendingImages(prev => prev.filter((_, j) => j !== i))}
                     className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 rounded-full text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
@@ -470,7 +520,7 @@ function App() {
               onClick={openAttachmentPicker}
               disabled={chatLoading}
               className="px-3 py-2 bg-white/15 text-white/70 rounded-lg hover:bg-white/25 hover:text-white/90 transition-colors disabled:opacity-50"
-              title="Attach image"
+              title="Attach file (images, Excel, CSV, PDF, Word…)"
             >
               📎
             </button>
