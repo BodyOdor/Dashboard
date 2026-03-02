@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
 import { useGatewayChat, type FileAttachment } from './useGatewayChat'
+import { buildFileContext } from './fileToText'
 
 interface Ticker {
   symbol: string
@@ -99,13 +100,30 @@ function App() {
     }
   }
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if ((!chatInput.trim() && pendingImages.length === 0) || chatLoading) return
     const text = chatInput.trim()
-    const images = pendingImages.length > 0 ? [...pendingImages] : undefined
+    const allFiles = pendingImages.length > 0 ? [...pendingImages] : []
     setChatInput('')
     setPendingImages([])
-    gatewaySend(text, images)
+    // Split into images (gateway handles natively) vs non-image files (gateway drops them)
+    const imageAttachments = allFiles.filter(f => f.isImage)
+    const nonImageFiles = allFiles.filter(f => !f.isImage)
+    // Convert non-image files to text and prepend as <file> XML context
+    let messageText = text
+    if (nonImageFiles.length > 0) {
+      try {
+        const fileContext = await buildFileContext(nonImageFiles)
+        if (fileContext) {
+          messageText = messageText ? `${messageText}
+
+${fileContext}` : fileContext
+        }
+      } catch (err) {
+        console.error('Failed to convert file attachments:', err)
+      }
+    }
+    gatewaySend(messageText, imageAttachments.length > 0 ? imageAttachments : undefined)
   }
 
   // Shared MIME map for all supported attachment types
